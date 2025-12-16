@@ -1,0 +1,6 @@
+openai
+python-dotenv
+notion-client
+streamlit
+requests
+yt-dlp
