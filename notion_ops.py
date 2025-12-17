@@ -15,7 +15,7 @@ DATABASE_ID = os.getenv("NOTION_DATABASE_ID")
 def clean_text(text):
     """清洗文本，防止 Notion 报错"""
     if not text: return ""
-    return text[:2000]  # Notion 文本块上限 2000 字符
+    return str(text)[:2000]  # 确保转为字符串并截断
 
 def build_content_blocks(summary, blocks):
     """构建 Notion 页面内容的通用函数"""
@@ -61,37 +61,41 @@ def build_content_blocks(summary, blocks):
                 })
         
         elif b_type == 'table':
-            # 构建表格 (Table)
+            # === 核心修复：表格结构修正 ===
             table_rows = []
-            # 表头
+            
+            # 1. 处理表头
             if 'headers' in content:
-                header_cells = [{"text": {"content": h}} for h in content['headers']]
+                # 关键修改：每个 header 必须包在 [] 里，变成 [[text], [text]]
+                header_cells = [[{"text": {"content": str(h)}}] for h in content['headers']]
                 table_rows.append({"type": "table_row", "table_row": {"cells": header_cells}})
-            # 数据行
+            
+            # 2. 处理数据行
             if 'rows' in content:
                 for row in content['rows']:
-                    row_cells = [{"text": {"content": str(c)}} for c in row]
+                    # 关键修改：每个 cell 也必须包在 [] 里
+                    row_cells = [[{"text": {"content": str(c)}}] for c in row]
                     table_rows.append({"type": "table_row", "table_row": {"cells": row_cells}})
             
-            children.append({
-                "object": "block",
-                "type": "table",
-                "table": {
-                    "table_width": len(content.get('headers', ['A'])),
-                    "has_column_header": True,
-                    "has_row_header": False,
-                    "children": table_rows
-                }
-            })
+            # 只有当有行数据时才添加表格块
+            if table_rows:
+                children.append({
+                    "object": "block",
+                    "type": "table",
+                    "table": {
+                        "table_width": len(content.get('headers', ['A'])),
+                        "has_column_header": True, # 声明第一行是表头
+                        "has_row_header": False,
+                        "children": table_rows
+                    }
+                })
 
     return children
 
 # --- 功能函数 ---
 
 def get_all_page_titles():
-    """
-    获取现有笔记标题 (使用 httpx 绕过 SDK bug)
-    """
+    """获取现有笔记标题 (httpx 实现)"""
     url = f"https://api.notion.com/v1/databases/{DATABASE_ID}/query"
     headers = {
         "Authorization": f"Bearer {os.getenv('NOTION_TOKEN')}",
@@ -100,18 +104,15 @@ def get_all_page_titles():
     }
     
     try:
-        # 只查询标题列，减少数据量
-        payload = {
-            "filter_properties": ["title"] 
-        }
+        payload = {"filter_properties": ["title"]}
         response = httpx.post(url, headers=headers, json=payload, timeout=10.0)
         data = response.json()
         
         results = []
         for page in data.get("results", []):
             try:
-                # 兼容不同列名 (Name 或 Spanish)
                 props = page.get("properties", {})
+                # 兼容不同列名
                 title_prop = props.get("Spanish") or props.get("Name") or list(props.values())[0]
                 
                 if title_prop and title_prop.get("title"):
@@ -119,14 +120,13 @@ def get_all_page_titles():
                     results.append({"id": page["id"], "title": title_text})
             except:
                 continue
-                
         return results
     except Exception as e:
-        print(f"❌ 获取标题失败 (httpx): {e}")
+        print(f"❌ 获取标题失败: {e}")
         return []
 
 def create_study_note(title, category, summary, blocks):
-    """创建西语笔记 (通道 A)"""
+    """创建西语笔记"""
     print(f"✍️ 正在创建西语笔记: {title}...")
     children_blocks = build_content_blocks(summary, blocks)
     
@@ -146,13 +146,9 @@ def create_study_note(title, category, summary, blocks):
         return False
 
 def create_general_note(title, tags, summary, url, content_blocks, db_id):
-    """创建通用笔记 (通道 B)"""
+    """创建通用笔记"""
     print(f"✍️ 正在创建通用笔记: {title}...")
-    
-    # 构造标签对象
     tag_objs = [{"name": tag} for tag in tags] if tags else []
-    
-    # 构造内容块 (摘要+正文)
     children_blocks = build_content_blocks(summary, content_blocks)
     
     try:
@@ -173,42 +169,33 @@ def create_general_note(title, tags, summary, url, content_blocks, db_id):
         return False
 
 def get_page_structure(page_id):
-    """获取页面结构 (用于融合)"""
+    """获取页面结构"""
     try:
         blocks = notion.blocks.children.list(block_id=page_id).get("results", [])
         structure_desc = []
         tables = []
-        
         for b in blocks:
-            b_type = b["type"]
-            if b_type == "heading_2":
+            if b["type"] == "heading_2":
                 text = b["heading_2"]["rich_text"][0]["plain_text"]
                 structure_desc.append(f"[标题] {text}")
-            elif b_type == "table":
-                table_id = b["id"]
-                # 获取表格内容（这里简化，只标记有表格）
-                tables.append({"id": table_id, "desc": "现有表格"})
-                structure_desc.append(f"[表格] ID:{table_id}")
-                
+            elif b["type"] == "table":
+                tables.append({"id": b["id"], "desc": "现有表格"})
+                structure_desc.append(f"[表格] ID:{b['id']}")
         return "\n".join(structure_desc), tables
     except Exception as e:
-        print(f"读取页面结构失败: {e}")
         return "", []
 
 def append_to_page(page_id, summary, blocks):
-    """追加内容到页面末尾"""
-    print(f"➕ 正在追加内容到页面 {page_id}...")
+    """追加内容"""
+    print(f"➕ 正在追加内容...")
     children = []
-    # 加个分割线
     children.append({"object": "block", "type": "divider", "divider": {}})
-    # 如果有新摘要，也加上
     if summary:
         children.append({
             "object": "block", 
             "type": "paragraph", 
-            "paragraph": {"rich_text": [{"text": {"content": f"📝 补充更新: {summary}", "annotations": {"italic": True}}}]}
+            "paragraph": {"rich_text": [{"text": {"content": f"📝 补充: {summary}", "annotations": {"italic": True}}}]}
         })
-    
     children.extend(build_content_blocks(None, blocks))
     
     try:
@@ -218,10 +205,11 @@ def append_to_page(page_id, summary, blocks):
         print(f"❌ 追加失败: {e}")
 
 def add_row_to_table(table_id, row_data):
-    """向现有表格插入行"""
+    """插入表格行"""
     print(f"➕ 正在插入表格行...")
     try:
-        row_cells = [{"text": {"content": str(cell)}} for cell in row_data]
+        # 修复：这里的 row_data 也要遵循 [[text], [text]] 结构
+        row_cells = [[{"text": {"content": str(cell)}}] for cell in row_data]
         notion.blocks.children.append(
             block_id=table_id,
             children=[{
