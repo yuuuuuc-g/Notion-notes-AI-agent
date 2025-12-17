@@ -11,28 +11,42 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# --- 🎨 CSS Styles  ---
+# --- 🎨 CSS Styles (核弹级覆盖方案) ---
 st.markdown("""
     <style>
-    /* 针对 Sidebar 里的 Primary 按钮进行暴力覆盖 */
-    section[data-testid="stSidebar"] button[kind="primary"] {
+    /* 1. 针对普通 Primary 按钮 */
+    button[kind="primary"] {
+        background: linear-gradient(90deg, #4facfe 0%, #00f2fe 100%) !important;
+        border: none !important;
+    }
+
+    /* 2. 针对表单提交按钮 (Form Submit) - 关键！ */
+    button[kind="primaryFormSubmit"] {
+        background: linear-gradient(90deg, #4facfe 0%, #00f2fe 100%) !important;
+        border: none !important;
+    }
+
+    /* 3. 针对所有侧边栏里的按钮 (兜底方案) */
+    section[data-testid="stSidebar"] button {
         background: linear-gradient(90deg, #4facfe 0%, #00f2fe 100%) !important;
         color: white !important;
         border: none !important;
         font-weight: bold !important;
         box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-        transition: all 0.3s ease;
     }
 
-    /* 悬停效果 */
-    section[data-testid="stSidebar"] button[kind="primary"]:hover {
+    /* 悬停效果 (让所有种类的按钮悬停都发蓝光) */
+    button[kind="primary"]:hover, 
+    button[kind="primaryFormSubmit"]:hover,
+    section[data-testid="stSidebar"] button:hover {
         background: linear-gradient(90deg, #00f2fe 0%, #4facfe 100%) !important;
         box-shadow: 0 4px 15px rgba(0, 242, 254, 0.4) !important;
         transform: translateY(-2px);
+        color: white !important;
     }
-    
-    /* 去掉按钮点击时的红色边框 */
-    section[data-testid="stSidebar"] button[kind="primary"]:focus {
+
+    /* 去掉点击时的红色边框和轮廓 */
+    button:focus {
         border: none !important;
         outline: none !important;
         box-shadow: none !important;
@@ -48,15 +62,15 @@ if "user_input" not in st.session_state:
 #  Sidebar: All Inputs Here
 # ===========================
 with st.sidebar:
-    # 🌟 标题修复：把图标拿出来，不加渐变特效，保持清晰
+    # 标题部分 (双行设计)
     st.markdown("""
-        <h1 style='text-align: left; color: #fff; font-size: 26px; font-family: "Helvetica Neue", sans-serif; font-weight: 700; margin-bottom: 0;'>
-            <span>💠</span> 
+        <h1 style='text-align: left; color: #fff; font-size: 24px; font-family: "Helvetica Neue", sans-serif; font-weight: 700; margin-bottom: 0;'>
+            <span>💠</span>
             <span style='background: linear-gradient(45deg, #4facfe 0%, #00f2fe 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent;'>
                AI Knowledge
             </span>
-            <br>
-            <span style='font-size: 18px; color: #888; font-weight: 400;'>
+            &nbsp;
+            <span style='font-size: 24px; color: #fff; font-weight: 700;'>
                 Agent
             </span>
         </h1>
@@ -79,7 +93,7 @@ with st.sidebar:
         
         st.divider()
         
-        # 按钮 (CSS 会自动把这个红色按钮变成蓝色)
+        # 按钮
         submit_btn = st.form_submit_button("🚀 Start Processing", type="primary", use_container_width=True)
 
     st.markdown("---")
