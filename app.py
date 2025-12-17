@@ -5,13 +5,13 @@ from main import main_workflow
 # 设置页面配置
 st.set_page_config(page_title="AI assistant notes", page_icon="🤖", layout="wide")
 
-st.title("🤖 AI AI assistant notes")
+st.title("🤖 AI assistant notes")
 st.markdown("---")
 
 # 侧边栏
 with st.sidebar:
     st.header("Instructions")
-    st.info("Enter one of the following below:\nTexts or URL")
+    st.info("Enter one of the following below:\nText or URL")
     st.divider()
     if st.button("Clear Input"):
         st.session_state["user_input"] = ""
