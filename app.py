@@ -11,7 +11,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# --- 🎨 CSS Styles (核弹级覆盖方案) ---
+# --- 🎨 CSS Styles ---
 st.markdown("""
     <style>
     /* 1. 针对普通 Primary 按钮 */
@@ -20,13 +20,13 @@ st.markdown("""
         border: none !important;
     }
 
-    /* 2. 针对表单提交按钮 (Form Submit) - 关键！ */
+    /* 2. 针对表单提交按钮 (Form Submit) */
     button[kind="primaryFormSubmit"] {
         background: linear-gradient(90deg, #4facfe 0%, #00f2fe 100%) !important;
         border: none !important;
     }
 
-    /* 3. 针对所有侧边栏里的按钮 (兜底方案) */
+    /* 3. 针对侧边栏里的所有按钮 (兜底) */
     section[data-testid="stSidebar"] button {
         background: linear-gradient(90deg, #4facfe 0%, #00f2fe 100%) !important;
         color: white !important;
@@ -34,8 +34,17 @@ st.markdown("""
         font-weight: bold !important;
         box-shadow: 0 4px 6px rgba(0,0,0,0.1);
     }
+    
+    /* 4. 特殊处理：清除按钮 (使其看起来不同，可选) */
+    /* 如果你想让清除按钮变灰，可以解开下面的注释，否则它也是蓝色的 */
+    /*
+    section[data-testid="stSidebar"] button[kind="secondary"] {
+        background: #f0f2f6 !important;
+        color: #31333F !important;
+    }
+    */
 
-    /* 悬停效果 (让所有种类的按钮悬停都发蓝光) */
+    /* 悬停效果 */
     button[kind="primary"]:hover, 
     button[kind="primaryFormSubmit"]:hover,
     section[data-testid="stSidebar"] button:hover {
@@ -45,7 +54,7 @@ st.markdown("""
         color: white !important;
     }
 
-    /* 去掉点击时的红色边框和轮廓 */
+    /* 去掉点击时的聚焦框 */
     button:focus {
         border: none !important;
         outline: none !important;
@@ -54,15 +63,22 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
+# --- 🧹 Callback Function to Clear Inputs ---
+def clear_inputs():
+    # 清空文本框
+    st.session_state["input_area"] = ""
+    # 清空文件上传器 (设置为 None 即可)
+    st.session_state["file_uploader_key"] = None
+
 # --- Initialize session state ---
-if "user_input" not in st.session_state:
-    st.session_state["user_input"] = ""
+if "input_area" not in st.session_state:
+    st.session_state["input_area"] = ""
 
 # ===========================
 #  Sidebar: All Inputs Here
 # ===========================
 with st.sidebar:
-    # 标题部分 (双行设计)
+    # 标题
     st.markdown("""
         <h1 style='text-align: left; color: #fff; font-size: 24px; font-family: "Helvetica Neue", sans-serif; font-weight: 700; margin-bottom: 0;'>
             <span>💠</span>
@@ -79,11 +95,25 @@ with st.sidebar:
     st.markdown("*Your All-in-One Knowledge Partner*")
     st.divider()
 
-    st.header("📥 Input Source")
+    # --- Header & Clear Button Layout ---
+    # 使用 columns 把标题和清除按钮放在同一行
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        st.header("📥 Input Source")
+    with col2:
+        # 🗑️ 清除按钮：点击时触发 clear_inputs 函数
+        st.button("🗑️", on_click=clear_inputs, help="Clear all inputs")
     
+    # --- Input Form ---
     with st.form(key="input_form"):
-        uploaded_file = st.file_uploader("📄 Upload PDF Document", type=["pdf"])
+        # 1. File Upload (注意：这里加了 key="file_uploader_key")
+        uploaded_file = st.file_uploader(
+            "📄 Upload PDF Document", 
+            type=["pdf"], 
+            key="file_uploader_key" 
+        )
         
+        # 2. Text/URL Input (注意：key="input_area" 必须和 session_state 对应)
         user_input = st.text_area(
             "🔗 Or paste URL / Text:", 
             height=200, 
@@ -93,11 +123,11 @@ with st.sidebar:
         
         st.divider()
         
-        # 按钮
+        # Submit Button
         submit_btn = st.form_submit_button("🚀 Start Processing", type="primary", use_container_width=True)
 
     st.markdown("---")
-    st.markdown("© 2025 AI Knowledge Agent.")
+    st.markdown("© 2023 AI Knowledge Agent. Built with ❤️ and Streamlit.")
 
 
 # ===========================

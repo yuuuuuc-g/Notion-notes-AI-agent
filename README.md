@@ -73,3 +73,12 @@ graph TD
 ├── note.txt            # CLI 模式输入缓冲
 ├── requirements.txt    # 依赖列表
 └── README.md           # 项目文档
+
+# 1. 添加所有修改过的文件 (main.py, notion_ops.py 等)
+#git add .
+
+# 2. 提交更改，写一个清晰的注释
+#git commit -m "Feat: Upgrade General Knowledge mode with structured key points extraction"
+
+# 3. 推送到远程仓库
+#git push

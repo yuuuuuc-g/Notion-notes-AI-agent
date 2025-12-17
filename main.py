@@ -51,23 +51,57 @@ def classify_intent(text):
     result = get_completion(prompt)
     return parse_json(result)
 
-# --- 🧠 大脑 B：通用内容处理器 ---
+# --- 🧠 大脑 B：通用内容处理器 (升级版) ---
 def process_general_knowledge(text):
-    prompt = f"""
-    你是一个资深的研究员。请整理这份素材，提取核心洞察。
-    
-    输入内容：
-    {text[:12000]} 
-    
-    任务：
-    1. 拟定一个吸引人的标题。
-    2. 提取 3-5 个关键标签 (Tags)。
-    3. 写一段 100-200 字的深度摘要。
-    4. 将正文整理为清晰的笔记结构 (Blocks)，保留数据、代码和论点。
-    
-    输出 JSON: {{ "title": "...", "tags": [], "summary": "...", "blocks": [...] }}
     """
-    return get_completion(prompt)
+    处理通用文章/视频：生成摘要、标签、标题、核心知识点
+    """
+    prompt = f"""
+    你是一个专业的知识管理助手。请分析以下内容（可能是文章、视频字幕或技术文档）：
+    
+    {text[:15000]} 
+    
+    请提取以下信息并以严格的 JSON 格式输出：
+    1. title: 一个简短精炼的标题（中文）。
+    2. summary: 200字以内的精辟摘要，概括核心思想。
+    3. tags: 3-5个相关标签（Array of strings）。
+    4. key_points: 提取 3-7 个核心知识点或干货（Array of strings）。
+       - 如果是代码/技术文章，请总结核心逻辑或关键函数。
+       - 如果是观点文章，请总结核心论据。
+       - 保持简洁，每条知识点 50-100 字。
+    
+    输出格式示例：
+    {{
+        "title": "PyTorch 核心原理解析",
+        "summary": "本文通过比喻详细解释了 PyTorch 中类与函数的区别...",
+        "tags": ["AI", "Python", "Deep Learning"],
+        "key_points": [
+            "Class (类) 相当于图纸，用于存储模型参数（记忆）。",
+            "Def (函数) 相当于动作，用于定义前向传播的计算流程。",
+            "__init__ 是初始化阶段，forward 是推理阶段。"
+        ]
+    }}
+    """
+    
+    # 调用 LLM
+    response = get_completion(prompt)
+    
+    # === 关键步骤：清洗和解析 JSON ===
+    # AI 有时候会因为为了好看加上 markdown 标记 (```json ... ```)，我们需要删掉它
+    clean_json = response.replace("```json", "").replace("```", "").strip()
+    
+    try:
+        data = json.loads(clean_json)
+        return data
+    except json.JSONDecodeError:
+        print(f"❌ JSON 解析失败，原始返回: {response}")
+        # 如果解析失败，做一个兜底返回，防止程序崩溃
+        return {
+            "title": "未命名笔记 (解析失败)", 
+            "summary": response[:500],  # 直接把 AI 的回复当摘要
+            "tags": ["Error"],
+            "key_points": ["自动整理失败，请查看 summary"] 
+        }
 
 # --- 🧠 大脑 A：西语处理器 (升级版) ---
 def check_topic_match(new_text, existing_pages):

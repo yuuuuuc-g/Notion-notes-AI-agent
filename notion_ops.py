@@ -145,28 +145,78 @@ def create_study_note(title, category, summary, blocks):
         print(f"❌ 创建失败: {e}")
         return False
 
-def create_general_note(title, tags, summary, url, content_blocks, db_id):
-    """创建通用笔记"""
-    print(f"✍️ 正在创建通用笔记: {title}...")
-    tag_objs = [{"name": tag} for tag in tags] if tags else []
-    children_blocks = build_content_blocks(summary, content_blocks)
+def create_general_note(data, original_url=None):
+    """
+    在 Notion 创建通用笔记 (带摘要 + 核心知识点)
+    """
+    notion = Client(auth=NOTION_TOKEN)
     
-    try:
-        notion.pages.create(
-            parent={"database_id": db_id},
-            properties={
-                "Name": {"title": [{"text": {"content": clean_text(title)}}]},
-                "Tags": {"multi_select": tag_objs},
-                "URL": {"url": url if url else None},
-                "Type": {"select": {"name": "Article"}}
-            },
-            children=children_blocks
-        )
-        print("✅ 通用笔记创建成功！")
-        return True
-    except Exception as e:
-        print(f"❌ 通用笔记创建失败: {e}")
-        return False
+    # 1. 准备摘要块 (Callout)
+    children_blocks = [
+        {
+            "object": "block",
+            "type": "callout",
+            "callout": {
+                "rich_text": [{"text": {"content": data.get('summary', '无摘要')}}],
+                "icon": {"emoji": "💡"},
+                "color": "gray_background"
+            }
+        },
+        # 加一个分割线
+        {
+            "object": "block",
+            "type": "divider",
+            "divider": {}
+        },
+        # 加一个小标题
+        {
+            "object": "block",
+            "type": "heading_3",
+            "heading_3": {
+                "rich_text": [{"text": {"content": "📝 核心知识点 (Key Takeaways)"}}],
+                "color": "blue"
+            }
+        }
+    ]
+
+    # 2. 循环添加核心知识点 (Bullet Points)
+    key_points = data.get('key_points', [])
+    for point in key_points:
+        children_blocks.append({
+            "object": "block",
+            "type": "bulleted_list_item",
+            "bulleted_list_item": {
+                "rich_text": [{"text": {"content": str(point)}}]
+            }
+        })
+
+    # 3. 如果有 URL，加在最后
+    if original_url:
+        children_blocks.append({
+             "object": "block",
+             "type": "paragraph",
+             "paragraph": {
+                 "rich_text": [
+                     {"text": {"content": "🔗 来源链接: "}},
+                     {"text": {"content": original_url, "link": {"url": original_url}}}
+                 ]
+             }
+        })
+
+    # 4. 创建页面
+    new_page = notion.pages.create(
+        parent={"database_id": NOTION_DB_ID},
+        properties={
+            "Name": {"title": [{"text": {"content": data.get('title', '无标题')}}]},
+            "Tags": {"multi_select": [{"name": tag} for tag in data.get('tags', [])]},
+            "Type": {"select": {"name": "Article"}},
+            "URL": {"url": original_url if original_url else None}
+        },
+        children=children_blocks
+    )
+    
+    print(f"✅ 通用笔记已创建: {data.get('title')}")
+    return new_page['url']
 
 def get_page_structure(page_id):
     """获取页面结构"""
