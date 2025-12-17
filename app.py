@@ -4,12 +4,33 @@ from io import StringIO
 from main import main_workflow
 
 # --- Page Configuration ---
-st.set_page_config(
-    page_title="AI Knowledge Agent",
-    page_icon="💠",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
+# --- CSS Styles for Custom Button ---
+st.markdown("""
+    <style>
+    /* 针对 Primary 按钮的定制样式 */
+    div.stButton > button:first-child {
+        background: linear-gradient(90deg, #4facfe 0%, #00f2fe 100%); /* 这里的颜色和标题对应 */
+        color: white;
+        border: none;
+        border-radius: 8px;
+        font-weight: 600;
+        transition: all 0.3s ease;
+    }
+
+    /* 鼠标悬停时的效果：稍微变亮 + 发光 */
+    div.stButton > button:first-child:hover {
+        background: linear-gradient(90deg, #00f2fe 0%, #4facfe 100%);
+        box-shadow: 0 4px 15px rgba(0, 242, 254, 0.4); /* 蓝色光晕 */
+        color: white;
+        transform: translateY(-2px); /* 微微上浮 */
+    }
+
+    /* 点击时的效果 */
+    div.stButton > button:first-child:active {
+        transform: translateY(0px);
+    }
+    </style>
+    """, unsafe_allow_html=True)
 
 # --- Initialize session state ---
 if "user_input" not in st.session_state:
@@ -23,11 +44,11 @@ with st.sidebar:
     st.markdown("""
         <h1 style='text-align: left; color: #fff; font-size: 26px; font-family: "Helvetica Neue", sans-serif; font-weight: 700;'>
             <span style='background: linear-gradient(45deg, #4facfe 0%, #00f2fe 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent;'>
-                💠 AI Knowledge
+                💠 AI Knowledge Agent
             </span>
             <br>
             <span style='font-size: 18px; color: #888; font-weight: 400;'>
-                Agent
+                
             </span>
         </h1>
         """, unsafe_allow_html=True)
@@ -59,7 +80,7 @@ with st.sidebar:
         submit_btn = st.form_submit_button("🧬 Start Processing", type="primary", use_container_width=True)
 
     st.markdown("---")
-    st.markdown("© 2023 AI Knowledge Agent. Built and Streamlit.")
+    st.markdown("© 2025 AI Knowledge Agent. Built and Streamlit.")
 
 
 # ===========================
@@ -100,7 +121,6 @@ if submit_btn:
                 main_workflow(user_input=user_input, uploaded_file=uploaded_file)
                 
                 status.update(label="✅ Mission Complete! Knowledge secured in Notion.", state="complete", expanded=False)
-                st.balloons()
                 st.success("🎉 Successfully processed and saved to your Notion database!")
                 
                 st.image(
