@@ -20,7 +20,7 @@ def fetch_youtube_content(url):
     """
     专门处理 YouTube 视频：使用 yt-dlp
     """
-    print(f"📺 检测到 YouTube 视频，正在启动 yt-dlp 引擎...")
+    print(f"📺 YouTube video detected, starting yt-dlp engine...")
     
     # 配置 yt-dlp：不下载视频，只获取元数据
     ydl_opts = {
@@ -75,10 +75,10 @@ def fetch_youtube_content(url):
                 found_lang = first_lang + " (Fallback)"
 
             if not target_url:
-                return f"⚠️ 该视频没有任何字幕 (人工或自动生成都没有)。\n视频标题：{info.get('title')}\n简介：{info.get('description')}"
+                return f"⚠️ No subtitles found for this video...\n视频标题：{info.get('title')}\n简介：{info.get('description')}"
 
             # 3. 下载并解析字幕数据
-            print(f"✅ 锁定字幕源 ({found_lang})，正在下载...")
+            print(f"✅ Subtitle source locked({found_lang})，downloading...")
             # yt-dlp 的 json3 格式非常标准，直接请求 URL 即可
             subs_json = requests.get(target_url).json()
             
@@ -102,7 +102,7 @@ def fetch_youtube_content(url):
             return f"【来源：YouTube 字幕 (由 yt-dlp 提取 - {found_lang})】\n{final_text}"
 
     except Exception as e:
-        print(f"❌ yt-dlp 提取失败: {e}")
+        print(f"❌ yt-dlp extraction failed: {e}")
         # 最后的保底：还是去抓网页文字
         return fetch_url_content_fallback(url)
 
@@ -116,7 +116,7 @@ def fetch_url_content_fallback(url):
         return f"❌ 抓取彻底失败: {e}"
 
 def fetch_url_content(url):
-    print(f"🌐 Web Analyst 正在分析链接: {url} ...")
+    print(f"🌐 Web Analyst is analyzing link: {url} ...")
     if "youtube.com" in url or "youtu.be" in url:
         return fetch_youtube_content(url)
     return fetch_url_content_fallback(url)

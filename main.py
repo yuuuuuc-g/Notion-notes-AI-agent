@@ -152,7 +152,7 @@ def main_workflow(raw_input):
     url_pattern = re.compile(r'http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\\(\\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+')
     if url_pattern.match(raw_input.strip()):
         original_url = raw_input.strip()
-        print(f"🌐 正在抓取 URL: {original_url}")
+        print(f"🌐 Fetching URL: {original_url}")
         content = fetch_url_content(original_url)
         if not content: return
         # 显式保留 URL 信息供后续使用
@@ -163,7 +163,7 @@ def main_workflow(raw_input):
     # 2. 🚦 路由分类
     intent = classify_intent(processed_text)
     content_type = intent.get('type', 'General')
-    print(f"👉 判定类型为：【{content_type}】")
+    print(f"👉Content type determined:【{content_type}】")
 
     # === 通道 A: 西语学习 ===
     if content_type == 'Spanish':
@@ -177,7 +177,7 @@ def main_workflow(raw_input):
         if match_result and match_result.get('match'):
             page_id = match_result.get('page_id')
             page_title = match_result.get('page_title', '未知标题')
-            print(f"💡 融合旧笔记: 《{page_title}》")
+            print(f"💡 Merging with existing note: 《{page_title}》")
             
             if not page_id: return
 
@@ -186,10 +186,10 @@ def main_workflow(raw_input):
             if tables:
                 merge_decision = parse_json(decide_merge_strategy(processed_text, structure_text, tables))
                 if merge_decision and merge_decision.get('action') == 'insert_row':
-                    print("💡 策略：插入表格...")
+                    print(" ➕ Inserting table row...")
                     add_row_to_table(merge_decision['table_id'], merge_decision['row_data'])
                 else:
-                    print("💡 策略：文末追加...")
+                    print(" ➕ Appending content...")
                     full_content = parse_json(generate_spanish_content(processed_text))
                     if full_content:
                         append_to_page(page_id, full_content['summary'], full_content['blocks'])
@@ -198,7 +198,7 @@ def main_workflow(raw_input):
                 if full_content:
                     append_to_page(page_id, full_content['summary'], full_content['blocks'])
         else:
-            print("🆕 新建西语笔记...")
+            print("🆕 Creating new Spanish note...")
             full_content = parse_json(generate_spanish_content(processed_text))
             if full_content:
                 create_study_note(
@@ -210,7 +210,7 @@ def main_workflow(raw_input):
 
     # === 通道 B: 通用知识 ===
     else:
-        print("🌍 进入通用知识模式 (AI/经济/编程)...")
+        print("🌍 Entering General Knowledge Mode...")
         if not DB_GENERAL:
             print("❌ 错误：未配置通用数据库 ID")
             return
@@ -228,6 +228,6 @@ def main_workflow(raw_input):
 
 if __name__ == "__main__":
     raw = read_input_file()
-    if raw and "请在此粘贴" not in raw:
+    if raw and "Enter content here" not in raw:
         main_workflow(raw)
-        print("\n🎉 处理完成！")
+        print("\n🎉 Processing Complete!")
