@@ -136,7 +136,7 @@ with st.sidebar:
 
 if not submit_btn:
     st.image(
-    "https://images.unsplash.com/...",
+    "https://images.unsplash.com/photo-1550537687-c9107a249001?q=80&w=2070&auto=format&fit=crop&ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D",
     caption="...",
     use_container_width=True  # 👈 这是一个新的标准参数
 )
@@ -166,7 +166,6 @@ if submit_btn:
                 main_workflow(user_input=user_input, uploaded_file=uploaded_file)
                 
                 status.update(label="✅ Mission Complete! Knowledge secured in Notion.", state="complete", expanded=False)
-                st.balloons()
                 st.success("🎉 Successfully processed and saved to your Notion database!")
                 
                 st.image(
