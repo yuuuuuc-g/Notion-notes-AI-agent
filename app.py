@@ -1,62 +1,71 @@
 import streamlit as st
-import os
+import sys
+from io import StringIO
 from main import main_workflow
 
-# 设置页面配置
-st.set_page_config(page_title="AI assistant notes", page_icon="🤖", layout="wide")
+# Page Configuration
+st.set_page_config(page_title="AI Knowledge Agent", page_icon="🧠", layout="wide")
 
-st.title("🤖 AI assistant notes")
+st.title("🧠 AI Knowledge Agent (All-in-One)")
 st.markdown("---")
 
-# 侧边栏
+# Initialize session state
+if "user_input" not in st.session_state:
+    st.session_state["user_input"] = ""
+
+# --- Sidebar: Input Area ---
 with st.sidebar:
-    st.header("Instructions")
-    st.info("Enter one of the following below:\nText or URL")
+    st.header("📥 Input Source")
+    
+    # Option 1: File Upload
+    uploaded_file = st.file_uploader("Upload PDF Document", type=["pdf"])
+    
     st.divider()
-    if st.button("Clear Input"):
-        st.session_state["user_input"] = ""
+    
+    # Option 2: Text/URL Input
+    user_input = st.text_area(
+        "Or paste URL / Text:", 
+        height=150, 
+        key="input_area",
+        placeholder="https://youtube.com/...\nhttps://medium.com/...\nOr paste text directly here"
+    )
+    
+    st.divider()
+    
+    # Action Button
+    start_btn = st.button("🚀 Start Processing", type="primary")
 
-# 输入框 (绑定 session_state 以便清空)
-user_input = st.text_area("Enter content or paste URL here:", height=200, key="user_input")
-
-if st.button("🚀 Start Processing", type="primary"):
-    if not user_input:
-        st.warning("Please enter content first!")
+# --- Main Interface: Logs & Results ---
+if start_btn:
+    if not user_input and not uploaded_file:
+        st.warning("⚠️ Please upload a file or enter content!")
     else:
-        # 使用 st.status 显示动态日志
-        with st.status("Processing...", expanded=True) as status:
-            # 重定向 print 输出到 Streamlit 界面
-            import sys
-            from io import StringIO
-            
-            # 捕获 stdout
+        # Status container
+        with st.status("🤖 AI is processing...", expanded=True) as status:
+            # Redirect stdout to capture logs
             old_stdout = sys.stdout
             result_buffer = StringIO()
-            
-            # 创建一个占位符用于实时更新日志
             log_placeholder = st.empty()
             
             class StreamlitLogger:
                 def write(self, msg):
                     if msg.strip():
-                        # 实时更新页面上的代码块
                         result_buffer.write(msg + "\n")
                         log_placeholder.code(result_buffer.getvalue(), language="text")
-                def flush(self):
-                    pass
+                def flush(self): pass
 
             sys.stdout = StreamlitLogger()
             
             try:
-                # === 核心调用 ===
-                main_workflow(user_input)
+                # === Core Workflow ===
+                main_workflow(user_input=user_input, uploaded_file=uploaded_file)
                 
                 status.update(label="✅ Processing Complete!", state="complete", expanded=False)
-                st.success("Note successfully saved to Notion!")
+                st.success("🎉 Knowledge saved to Notion successfully!")
                 
             except Exception as e:
                 status.update(label="❌ Error Occurred", state="error")
-                st.error(f"程序运行出错: {str(e)}")
+                st.error(f"Runtime Error: {str(e)}")
             finally:
-                # 恢复标准输出
+                # Restore standard output
                 sys.stdout = old_stdout
