@@ -1,6 +1,7 @@
 import json
 import re
 import os
+from file_ops import read_pdf_content
 from dotenv import load_dotenv
 from llm_client import get_completion
 from web_ops import fetch_url_content
@@ -144,26 +145,48 @@ def decide_merge_strategy(new_text, existing_structure_text, available_tables):
     """
     return get_completion(prompt)
 
-# --- 🎩 总指挥逻辑 ---
-def main_workflow(raw_input):
+# --- 🎩 总指挥逻辑 (升级版) ---
+def main_workflow(user_input=None, uploaded_file=None):
+    """
+    入口支持两种模式：
+    1. user_input: 文本或 URL
+    2. uploaded_file: Streamlit 的文件对象
+    """
+    processed_text = ""
     original_url = None
     
-    # 1. 识别 URL
-    url_pattern = re.compile(r'http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\\(\\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+')
-    if url_pattern.match(raw_input.strip()):
-        original_url = raw_input.strip()
-        print(f"🌐 Fetching URL: {original_url}")
-        content = fetch_url_content(original_url)
+    # === 情况 A: 处理文件上传 ===
+    if uploaded_file:
+        print("📂 检测到文件输入...")
+        content = read_pdf_content(uploaded_file)
         if not content: return
-        # 显式保留 URL 信息供后续使用
-        processed_text = f"【来源 URL】{original_url}\n\n{content}"
-    else:
-        processed_text = raw_input
+        processed_text = content
 
+    # === 情况 B: 处理文本/URL 输入 ===
+    elif user_input:
+        # 1. 识别 URL
+        url_pattern = re.compile(r'http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\\(\\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+')
+        if url_pattern.match(user_input.strip()):
+            original_url = user_input.strip()
+            print(f"🌐 正在抓取 URL: {original_url}")
+            content = fetch_url_content(original_url)
+            if not content: return
+            processed_text = f"【来源 URL】{original_url}\n\n{content}"
+        else:
+            processed_text = user_input
+    
+    else:
+        print("⚠️ 没有收到任何输入")
+        return
+
+    # === 下面流程通用 (路由 -> 生成 -> 入库) ===
+    
     # 2. 🚦 路由分类
+    print("🚦 正在分析内容类型 (路由中)...")
     intent = classify_intent(processed_text)
     content_type = intent.get('type', 'General')
-    print(f"👉Content type determined:【{content_type}】")
+    print(f"👉 判定类型为：【{content_type}】")
+
 
     # === 通道 A: 西语学习 ===
     if content_type == 'Spanish':

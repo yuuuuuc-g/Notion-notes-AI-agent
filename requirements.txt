@@ -4,3 +4,4 @@ notion-client
 streamlit
 requests
 yt-dlp
+pymupdf
