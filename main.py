@@ -159,7 +159,7 @@ def main_workflow(user_input=None, uploaded_file=None):
         # === General Knowledge Mode ===
         print("🌍 Entering General Knowledge Mode...")
         
-        # 1. Get Dict data directly
+        # ⚠️ CRITICAL FIX: Direct call, NO parse_json()
         note_data = process_general_knowledge(processed_text)
         
         if note_data:
