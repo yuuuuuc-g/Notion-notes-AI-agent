@@ -38,9 +38,9 @@ st.markdown("""
     /* 4. 特殊处理：清除按钮 (使其看起来不同，可选) */
     /* 如果你想让清除按钮变灰，可以解开下面的注释，否则它也是蓝色的 */
     /*
-    section[data-testid="stSidebar"] button[kind="secondary"] {
-        background: #f0f2f6 !important;
-        color: #31333F !important;
+    #section[data-testid="stSidebar"] button[kind="secondary"] {
+    #    background: #f0f2f6 !important;
+    #    color: #31333F !important;
     }
     */
 
@@ -127,7 +127,7 @@ with st.sidebar:
         submit_btn = st.form_submit_button("🚀 Start Processing", type="primary", use_container_width=True)
 
     st.markdown("---")
-    st.markdown("© 2023 AI Knowledge Agent. Built with ❤️ and Streamlit.")
+    st.markdown("© 2025 AI Knowledge Agent. ")
 
 
 # ===========================
@@ -136,10 +136,10 @@ with st.sidebar:
 
 if not submit_btn:
     st.image(
-        "https://images.unsplash.com/photo-1451187580459-43490279c0fa?q=80&w=2072&auto=format&fit=crop&ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D",
-        caption="“Knowledge is a universe waiting to be explored.”",
-        width=True
-    )
+    "https://images.unsplash.com/...",
+    caption="...",
+    use_container_width=True  # 👈 这是一个新的标准参数
+)
     st.info("👈 Please provide a URL, text, or upload a PDF in the sidebar to begin.")
 
 

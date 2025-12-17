@@ -1,194 +1,99 @@
 import os
-import json
-import httpx
 from notion_client import Client
-from dotenv import load_dotenv
 
-load_dotenv()
+# === 1. 初始化配置 ===
+# 确保你的 .env 文件里有这些变量
+NOTION_TOKEN = os.environ.get("NOTION_TOKEN")
+DB_SPANISH_ID = os.environ.get("NOTION_DATABASE_ID")          # 西语数据库 ID
+DB_GENERAL_ID = os.environ.get("NOTION_DATABASE_ID_GENERAL")  # 通用数据库 ID
 
-# 初始化 Notion Client
-notion = Client(auth=os.getenv("NOTION_TOKEN"))
-DATABASE_ID = os.getenv("NOTION_DATABASE_ID")
+# 初始化客户端
+notion = Client(auth=NOTION_TOKEN)
 
-# --- 核心工具函数 ---
-
+# --- 工具函数：清洗文本 ---
 def clean_text(text):
-    """清洗文本，防止 Notion 报错"""
-    if not text: return ""
-    return str(text)[:2000]  # 确保转为字符串并截断
+    """防止 Notion 因为文本过长或为 None 而报错"""
+    if text is None:
+        return ""
+    return str(text)[:2000]  # Notion 一个 block 最多存 2000 字
 
-def build_content_blocks(summary, blocks):
-    """构建 Notion 页面内容的通用函数"""
-    children = []
+# --- 功能 A: 创建西语笔记 (带单词表) ---
+def create_study_note(title, summary, word_list, original_url=None):
+    """
+    参数:
+    - title: 笔记标题
+    - summary: 摘要
+    - word_list: 单词列表 [{'word':..., 'meaning':..., 'example':...}]
+    - original_url: 来源链接
+    """
+    print(f"✍️ Writing Spanish Note: {title}...")
     
-    # 1. 插入摘要 (如果有)
-    if summary:
-        children.append({
+    # 1. 构建单词表 (Table Blocks)
+    table_rows = []
+    
+    # A. 表头
+    table_rows.append({
+        "type": "table_row",
+        "table_row": {
+            "cells": [
+                [{"text": {"content": "单词/短语"}}],
+                [{"text": {"content": "中文含义"}}],
+                [{"text": {"content": "例句"}}],
+            ]
+        }
+    })
+    
+    # B. 数据行 (循环 word_list)
+    for item in word_list:
+        # 确保每个字段都是字符串
+        w = clean_text(item.get('word', ''))
+        m = clean_text(item.get('meaning', ''))
+        e = clean_text(item.get('example', ''))
+        
+        table_rows.append({
+            "type": "table_row",
+            "table_row": {
+                "cells": [
+                    [{"text": {"content": w}}],
+                    [{"text": {"content": m}}],
+                    [{"text": {"content": e}}],
+                ]
+            }
+        })
+
+    # 2. 组装页面内容 (Children)
+    children_blocks = [
+        # 摘要块 (Callout)
+        {
             "object": "block",
             "type": "callout",
             "callout": {
                 "rich_text": [{"text": {"content": clean_text(summary)}}],
-                "icon": {"emoji": "💡"},
-                "color": "gray_background"
-            }
-        })
-
-    # 2. 遍历 blocks 构建正文
-    for block in blocks:
-        b_type = block.get('type')
-        content = block.get('content')
-        
-        if b_type == 'heading':
-            children.append({
-                "object": "block",
-                "type": "heading_2",
-                "heading_2": {"rich_text": [{"text": {"content": clean_text(content)}}]}
-            })
-        
-        elif b_type == 'text':
-            children.append({
-                "object": "block",
-                "type": "paragraph",
-                "paragraph": {"rich_text": [{"text": {"content": clean_text(content)}}]}
-            })
-            
-        elif b_type == 'list':
-            for item in content:
-                children.append({
-                    "object": "block",
-                    "type": "bulleted_list_item",
-                    "bulleted_list_item": {"rich_text": [{"text": {"content": clean_text(item)}}]}
-                })
-        
-        elif b_type == 'table':
-            # === 核心修复：表格结构修正 ===
-            table_rows = []
-            
-            # 1. 处理表头
-            if 'headers' in content:
-                # 关键修改：每个 header 必须包在 [] 里，变成 [[text], [text]]
-                header_cells = [[{"text": {"content": str(h)}}] for h in content['headers']]
-                table_rows.append({"type": "table_row", "table_row": {"cells": header_cells}})
-            
-            # 2. 处理数据行
-            if 'rows' in content:
-                for row in content['rows']:
-                    # 关键修改：每个 cell 也必须包在 [] 里
-                    row_cells = [[{"text": {"content": str(c)}}] for c in row]
-                    table_rows.append({"type": "table_row", "table_row": {"cells": row_cells}})
-            
-            # 只有当有行数据时才添加表格块
-            if table_rows:
-                children.append({
-                    "object": "block",
-                    "type": "table",
-                    "table": {
-                        "table_width": len(content.get('headers', ['A'])),
-                        "has_column_header": True, # 声明第一行是表头
-                        "has_row_header": False,
-                        "children": table_rows
-                    }
-                })
-
-    return children
-
-# --- 功能函数 ---
-
-def get_all_page_titles():
-    """获取现有笔记标题 (httpx 实现)"""
-    url = f"https://api.notion.com/v1/databases/{DATABASE_ID}/query"
-    headers = {
-        "Authorization": f"Bearer {os.getenv('NOTION_TOKEN')}",
-        "Notion-Version": "2022-06-28",
-        "Content-Type": "application/json"
-    }
-    
-    try:
-        payload = {"filter_properties": ["title"]}
-        response = httpx.post(url, headers=headers, json=payload, timeout=10.0)
-        data = response.json()
-        
-        results = []
-        for page in data.get("results", []):
-            try:
-                props = page.get("properties", {})
-                # 兼容不同列名
-                title_prop = props.get("Spanish") or props.get("Name") or list(props.values())[0]
-                
-                if title_prop and title_prop.get("title"):
-                    title_text = title_prop["title"][0]["plain_text"]
-                    results.append({"id": page["id"], "title": title_text})
-            except:
-                continue
-        return results
-    except Exception as e:
-        print(f"❌ 获取标题失败: {e}")
-        return []
-
-def create_study_note(title, category, summary, blocks):
-    """创建西语笔记"""
-    print(f"✍️ 正在创建西语笔记: {title}...")
-    children_blocks = build_content_blocks(summary, blocks)
-    
-    try:
-        notion.pages.create(
-            parent={"database_id": DATABASE_ID},
-            properties={
-                "Spanish": {"title": [{"text": {"content": clean_text(title)}}]},
-                "Category": {"select": {"name": category}},
-            },
-            children=children_blocks
-        )
-        print("✅ 创建成功！")
-        return True
-    except Exception as e:
-        print(f"❌ 创建失败: {e}")
-        return False
-
-def create_general_note(data, original_url=None):
-    """
-    在 Notion 创建通用笔记 (带摘要 + 核心知识点)
-    """
-    notion = Client(auth=NOTION_TOKEN)
-    
-    # 1. 准备摘要块 (Callout)
-    children_blocks = [
-        {
-            "object": "block",
-            "type": "callout",
-            "callout": {
-                "rich_text": [{"text": {"content": data.get('summary', '无摘要')}}],
-                "icon": {"emoji": "💡"},
+                "icon": {"emoji": "📝"},
                 "color": "gray_background"
             }
         },
-        # 加一个分割线
-        {
-            "object": "block",
-            "type": "divider",
-            "divider": {}
-        },
-        # 加一个小标题
+        # 标题
         {
             "object": "block",
             "type": "heading_3",
             "heading_3": {
-                "rich_text": [{"text": {"content": "📝 核心知识点 (Key Takeaways)"}}],
-                "color": "blue"
+                "rich_text": [{"text": {"content": "📚 核心词汇表 (Vocabulario)"}}],
+                "color": "orange"
+            }
+        },
+        # 表格块
+        {
+            "object": "block",
+            "type": "table",
+            "table": {
+                "table_width": 3,
+                "has_column_header": True,
+                "has_row_header": False,
+                "children": table_rows
             }
         }
     ]
-
-    # 2. 循环添加核心知识点 (Bullet Points)
-    key_points = data.get('key_points', [])
-    for point in key_points:
-        children_blocks.append({
-            "object": "block",
-            "type": "bulleted_list_item",
-            "bulleted_list_item": {
-                "rich_text": [{"text": {"content": str(point)}}]
-            }
-        })
 
     # 3. 如果有 URL，加在最后
     if original_url:
@@ -197,76 +102,109 @@ def create_general_note(data, original_url=None):
              "type": "paragraph",
              "paragraph": {
                  "rich_text": [
-                     {"text": {"content": "🔗 来源链接: "}},
+                     {"text": {"content": "🔗 Source: "}},
                      {"text": {"content": original_url, "link": {"url": original_url}}}
                  ]
              }
         })
 
     # 4. 创建页面
-    new_page = notion.pages.create(
-        parent={"database_id": NOTION_DB_ID},
-        properties={
-            "Name": {"title": [{"text": {"content": data.get('title', '无标题')}}]},
-            "Tags": {"multi_select": [{"name": tag} for tag in data.get('tags', [])]},
-            "Type": {"select": {"name": "Article"}},
-            "URL": {"url": original_url if original_url else None}
-        },
-        children=children_blocks
-    )
-    
-    print(f"✅ 通用笔记已创建: {data.get('title')}")
-    return new_page['url']
-
-def get_page_structure(page_id):
-    """获取页面结构"""
     try:
-        blocks = notion.blocks.children.list(block_id=page_id).get("results", [])
-        structure_desc = []
-        tables = []
-        for b in blocks:
-            if b["type"] == "heading_2":
-                text = b["heading_2"]["rich_text"][0]["plain_text"]
-                structure_desc.append(f"[标题] {text}")
-            elif b["type"] == "table":
-                tables.append({"id": b["id"], "desc": "现有表格"})
-                structure_desc.append(f"[表格] ID:{b['id']}")
-        return "\n".join(structure_desc), tables
-    except Exception as e:
-        return "", []
-
-def append_to_page(page_id, summary, blocks):
-    """追加内容"""
-    print(f"➕ 正在追加内容...")
-    children = []
-    children.append({"object": "block", "type": "divider", "divider": {}})
-    if summary:
-        children.append({
-            "object": "block", 
-            "type": "paragraph", 
-            "paragraph": {"rich_text": [{"text": {"content": f"📝 补充: {summary}", "annotations": {"italic": True}}}]}
-        })
-    children.extend(build_content_blocks(None, blocks))
-    
-    try:
-        notion.blocks.children.append(block_id=page_id, children=children)
-        print("✅ 追加成功！")
-    except Exception as e:
-        print(f"❌ 追加失败: {e}")
-
-def add_row_to_table(table_id, row_data):
-    """插入表格行"""
-    print(f"➕ 正在插入表格行...")
-    try:
-        # 修复：这里的 row_data 也要遵循 [[text], [text]] 结构
-        row_cells = [[{"text": {"content": str(cell)}}] for cell in row_data]
-        notion.blocks.children.append(
-            block_id=table_id,
-            children=[{
-                "type": "table_row",
-                "table_row": {"cells": row_cells}
-            }]
+        notion.pages.create(
+            parent={"database_id": DB_SPANISH_ID},
+            properties={
+                "Name": {"title": [{"text": {"content": clean_text(title)}}]},
+                "Tags": {"multi_select": [{"name": "Spanish"}]},
+                # 如果你的数据库里有 "Type" 或 "Category" 列，可以在这里加
+                "Type": {"select": {"name": "Study Note"}},
+                "URL": {"url": original_url if original_url else None}
+            },
+            children=children_blocks
         )
-        print("✅ 插入成功！")
+        print("✅ Spanish Note Created Successfully!")
+        return True
     except Exception as e:
-        print(f"❌ 插入表格失败: {e}")
+        print(f"❌ Failed to create Spanish note: {e}")
+        return False
+
+
+# --- 功能 B: 创建通用笔记 (带 Key Points) ---
+def create_general_note(data, original_url=None):
+    """
+    参数 data: 字典, 包含 title, summary, key_points (List[str]), tags
+    """
+    title = data.get('title', 'Unnamed Note')
+    print(f"✍️ Writing General Note: {title}...")
+    
+    # 1. 准备摘要块
+    children_blocks = [
+        {
+            "object": "block",
+            "type": "callout",
+            "callout": {
+                "rich_text": [{"text": {"content": clean_text(data.get('summary', 'No Summary'))}}],
+                "icon": {"emoji": "💡"},
+                "color": "gray_background"
+            }
+        },
+        {
+            "object": "block",
+            "type": "divider",
+            "divider": {}
+        },
+        {
+            "object": "block",
+            "type": "heading_3",
+            "heading_3": {
+                "rich_text": [{"text": {"content": "📝 Key Takeaways"}}],
+                "color": "blue"
+            }
+        }
+    ]
+
+    # 2. 循环添加核心知识点 (Bullet Points)
+    # main.py 传过来的是字符串列表 ['point1', 'point2']
+    points = data.get('key_points', [])
+    for point in points:
+        children_blocks.append({
+            "object": "block",
+            "type": "bulleted_list_item",
+            "bulleted_list_item": {
+                "rich_text": [{"text": {"content": clean_text(point)}}]
+            }
+        })
+
+    # 3. 添加 URL
+    if original_url:
+        children_blocks.append({
+             "object": "block",
+             "type": "paragraph",
+             "paragraph": {
+                 "rich_text": [
+                     {"text": {"content": "🔗 Source: "}},
+                     {"text": {"content": original_url, "link": {"url": original_url}}}
+                 ]
+             }
+        })
+
+    # 4. 创建页面
+    try:
+        if not DB_GENERAL_ID:
+            print("❌ Error: NOTION_DATABASE_ID_GENERAL is not set in .env")
+            return False
+
+        notion.pages.create(
+            parent={"database_id": DB_GENERAL_ID},
+            properties={
+                "Name": {"title": [{"text": {"content": clean_text(title)}}]},
+                "Tags": {"multi_select": [{"name": tag} for tag in data.get('tags', [])]},
+                "Type": {"select": {"name": "General Knowledge"}},
+                "URL": {"url": original_url if original_url else None}
+            },
+            children=children_blocks
+        )
+        print("✅ General Note Created Successfully!")
+        return True
+    except Exception as e:
+        print(f"❌ Failed to create General note: {e}")
+        return False
