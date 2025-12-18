@@ -191,7 +191,7 @@ def create_study_note(title, category, summary, blocks, original_url=None):
             children=children
         )
         print("✅ Study Note Created!")
-        return True
+        return new_page['id']
     except Exception as e:
         print(f"❌ Failed: {e}")
         return False
@@ -232,7 +232,7 @@ def create_general_note(data, original_url=None):
             children=children
         )
         print("✅ General Note Created!")
-        return True
+        return new_page['id']
     except Exception as e:
         print(f"❌ Failed: {e}")
         return False
@@ -260,3 +260,65 @@ def add_row_to_table(table_id, row_data):
         print("✅ Row inserted!")
     except Exception as e:
         print(f"❌ Table insert failed: {e}")
+        
+# --- notion_ops.py 追加内容 ---
+
+def append_podcast_script(page_id, script):
+    """
+    将播客剧本追加到 Notion 页面底部
+    """
+    print(f"🎙️ 正在保存播客剧本到页面 {page_id}...")
+    
+    # 构造剧本的 Block
+    # 我们用一个 Toggle List (折叠列表) 把剧本包起来，避免占用太长篇幅
+    script_children = []
+    
+    for line in script:
+        speaker = line.get('speaker', 'Unknown')
+        text = line.get('text', '')
+        
+        # 给不同角色加个 Emoji 区分
+        icon = "👩🏻‍🦰" if speaker == "Host" else "👨🏻‍🏫"
+        
+        script_children.append({
+            "object": "block",
+            "type": "paragraph",
+            "paragraph": {
+                "rich_text": [
+                    {
+                        "text": {"content": f"{icon} {speaker}: ", "annotations": {"bold": True}}
+                    },
+                    {
+                        "text": {"content": text}
+                    }
+                ]
+            }
+        })
+
+    # 外层容器：Toggle Heading
+    wrapper_block = [
+        {
+            "object": "block",
+            "type": "heading_3",
+            "heading_3": {"rich_text": [{"text": {"content": "🎧 AI Podcast Transcript"}}]}
+        },
+        {
+            "object": "block",
+            "type": "toggle", # 折叠块
+            "toggle": {
+                "rich_text": [{"text": {"content": "Click to read the full dialogue (点击查看逐字稿)"}}],
+                "children": script_children # 把剧本塞进去
+            }
+        }
+    ]
+
+    try:
+        notion.blocks.children.append(
+            block_id=page_id,
+            children=wrapper_block
+        )
+        print("✅ 剧本已归档！")
+        return True
+    except Exception as e:
+        print(f"❌ 剧本保存失败: {e}")
+        return False

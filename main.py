@@ -5,6 +5,7 @@ from dotenv import load_dotenv
 from llm_client import get_completion, get_reasoning_completion # 导入 R1 函数
 from web_ops import fetch_url_content
 import notion_ops
+import podcast_ops
 
 try:
     from file_ops import read_pdf_content
@@ -129,6 +130,22 @@ def process_general_knowledge(text):
     
     return safe_json_parse(content, "General Knowledge R1")
 
+# --- 辅助：播客生成流水线 ---
+def process_podcast_pipeline(text_content, page_id):
+    """
+    处理播客的生成与归档
+    """
+    print("\n🎙️ 启动播客生成流水线...")
+    
+    # 1. 生成剧本 + 音频
+    script, audio_path = podcast_ops.run_podcast_workflow(text_content)
+    
+    if script and page_id:
+        # 2. 将剧本存入 Notion
+        notion_ops.append_podcast_script(page_id, script)
+    
+    return audio_path
+
 # --- 🎩 Main Workflow ---
 def main_workflow(user_input=None, uploaded_file=None):
     processed_text = ""
@@ -136,12 +153,9 @@ def main_workflow(user_input=None, uploaded_file=None):
     
     # 1. 获取输入
     if uploaded_file:
-        if not read_pdf_content:
-            raise Exception("❌ file_ops.py not found or failed to import.")
+        if not read_pdf_content: raise Exception("Missing file_ops")
         print("📂 Reading PDF...")
         processed_text = read_pdf_content(uploaded_file)
-        if not processed_text:
-            raise Exception("❌ PDF is empty or unreadable.")
     elif user_input:
         if user_input.strip().startswith("http"):
             original_url = user_input.strip()
@@ -151,14 +165,15 @@ def main_workflow(user_input=None, uploaded_file=None):
         else:
             processed_text = user_input
     
-    if not processed_text:
-        raise Exception("⚠️ No input provided.")
+    if not processed_text: raise Exception("Empty input")
 
     # 2. 路由
-    print("🚦 Routing content...")
+    print("🚦 Routing...")
     intent = classify_intent(processed_text)
     content_type = intent.get('type', 'General')
     print(f"👉 Type: {content_type}")
+
+    current_page_id = None # 用于记录操作的页面 ID
 
     # 3. 处理流程
     if content_type == 'Spanish':
@@ -167,42 +182,55 @@ def main_workflow(user_input=None, uploaded_file=None):
         match = check_topic_match(processed_text, existing_titles)
         
         if match.get('match'):
+            page_id = match.get('page_id')
+            current_page_id = page_id # 记录 ID
             print(f"💡 Merging into: {match.get('page_title')}")
-            structure, tables = notion_ops.get_page_structure(match.get('page_id'))
+            
+            structure, tables = notion_ops.get_page_structure(page_id)
             if tables:
                 strategy = decide_merge_strategy(processed_text, structure, tables)
                 if strategy.get('action') == 'insert_row':
                     notion_ops.add_row_to_table(strategy['table_id'], strategy['row_data'])
-                    return 
-            
-            data = generate_spanish_content(processed_text)
-            if data:
-                notion_ops.append_to_page(match.get('page_id'), data.get('summary'), data.get('blocks'))
+                else:
+                    data = generate_spanish_content(processed_text)
+                    if data: notion_ops.append_to_page(page_id, data.get('summary'), data.get('blocks'))
+            else:
+                data = generate_spanish_content(processed_text)
+                if data: notion_ops.append_to_page(page_id, data.get('summary'), data.get('blocks'))
         else:
             print("🆕 Creating New Spanish Note...")
             data = generate_spanish_content(processed_text)
             if data:
-                res = notion_ops.create_study_note(data.get('title'), data.get('category', 'General'), data.get('summary'), data.get('blocks'), original_url)
-                if not res: raise Exception("Failed to create Notion page.")
+                # 注意：create_study_note 现在返回 page_id
+                current_page_id = notion_ops.create_study_note(data.get('title'), data.get('category', 'General'), data.get('summary'), data.get('blocks'), original_url)
 
     else:
         print("🌍 General Knowledge Mode...")
         existing_titles = notion_ops.get_all_page_titles(notion_ops.DB_GENERAL_ID)
         match = check_topic_match(processed_text, existing_titles)
         
-        print("🧠 Generating notes (Deep Analysis)...")
+        print("🧠 Generating notes (R1)...")
         data = process_general_knowledge(processed_text)
         
-        if not data:
-            raise Exception("❌ AI failed to generate valid JSON notes.")
+        if not data: raise Exception("AI failed.")
 
         if match.get('match'):
-            print(f"💡 Topic Exists! Merging into: 《{match.get('page_title')}》")
-            notion_ops.append_to_page(match.get('page_id'), data.get('summary'), data.get('key_points'))
+            page_id = match.get('page_id')
+            current_page_id = page_id # 记录 ID
+            print(f"💡 Merging into: {match.get('page_title')}")
+            notion_ops.append_to_page(page_id, data.get('summary'), data.get('key_points'))
         else:
             print("🆕 Creating General Note...")
-            res = notion_ops.create_general_note(data, original_url)
-            if not res: raise Exception("Failed to write to Notion (Check DB ID).")
+            # 注意：create_general_note 现在返回 page_id
+            current_page_id = notion_ops.create_general_note(data, original_url)
 
+    # === 🎙️ 4. 播客生成环节 (新增) ===
+    audio_file = None
+    if current_page_id:
+        # 无论新建还是合并，都生成播客
+        # 把最原始的 processed_text 给 AI 做素材
+        audio_file = process_podcast_pipeline(processed_text, current_page_id)
+    
     print("✅ Processing Complete!")
+    return audio_file # 返回音频路径给 Streamlit 播放
     

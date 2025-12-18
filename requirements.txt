@@ -7,3 +7,5 @@ httpx
 beautifulsoup4
 PyPDF2
 yt-dlp
+edge-tts
+pydub
