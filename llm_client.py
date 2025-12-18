@@ -12,14 +12,14 @@ client = OpenAI(
 def get_completion(prompt, model="deepseek-chat"):
     """
     通用快速模式 (DeepSeek-V3)
-    用于：分类、简单提取、JSON格式化
     """
     try:
         response = client.chat.completions.create(
             model=model,
             messages=[{"role": "user", "content": prompt}],
             temperature=0.1, 
-            stream=False
+            stream=False,
+            max_tokens=8000  # 🔼 增加输出上限，防止长文截断
         )
         return response.choices[0].message.content
     except Exception as e:
@@ -29,15 +29,13 @@ def get_completion(prompt, model="deepseek-chat"):
 def get_reasoning_completion(prompt):
     """
     深度思考模式 (DeepSeek-R1)
-    用于：长难文章分析、复杂逻辑判断、西语深度解析
-    返回: (content, reasoning_content) 元组
     """
     try:
-        print("🤔 R1 正在深度思考 (Deep Thinking)...")
+        print("🤔 R1 正在深度思考 (这可能需要一点时间)...")
         response = client.chat.completions.create(
             model="deepseek-reasoner", 
             messages=[{"role": "user", "content": prompt}],
-            # R1 不支持 temperature 参数 (或建议设为默认)
+            max_tokens=8000  # 🔼 关键！给思考过程和 JSON 留足空间
         )
         
         # 获取最终回答
