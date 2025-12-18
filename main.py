@@ -2,7 +2,8 @@ import json
 import os
 import re
 from dotenv import load_dotenv
-from llm_client import get_completion
+# 🌟 修改点 1: 导入 R1 的调用函数
+from llm_client import get_completion, get_reasoning_completion
 from web_ops import fetch_url_content
 import notion_ops
 
@@ -13,29 +14,23 @@ except ImportError:
 
 load_dotenv()
 
-# --- 🛠️ 核心修复：全能解析器 + 调试日志 ---
+# --- 🛠️ 核心修复：全能解析器 (保持不变) ---
 def safe_json_parse(input_data, context=""):
     """
     带调试功能的解析器
     """
-    # 1. 如果是空值
     if not input_data:
         print(f"❌ [Error] LLM returned EMPTY response for: {context}")
         return None
 
-    # 2. 如果已经是字典
     if isinstance(input_data, dict):
         return input_data
     
-    # 3. 如果是字符串
     try:
         text = str(input_data).strip()
-        # 调试：打印前100个字符看看 AI 说了啥
         print(f"🔍 [Debug] LLM Raw Response (First 100 chars): {text[:100]}...")
         
-        # 清洗
         clean_text = text.replace("```json", "").replace("```", "")
-        # 有时候 AI 会在 JSON 前面废话，我们尝试提取第一个 { 到最后一个 }
         start = clean_text.find("{")
         end = clean_text.rfind("}") + 1
         if start != -1 and end != -1:
@@ -44,15 +39,13 @@ def safe_json_parse(input_data, context=""):
         return json.loads(clean_text)
     except json.JSONDecodeError as e:
         print(f"❌ JSON Decode Error: {e}")
-        print(f"👇 Raw content that failed:\n{input_data}")
         return None
     except Exception as e:
         print(f"❌ Unknown Parse Error: {e}")
         return None
 
-# --- 🧠 Brain A: Classifier ---
+# --- 🧠 Brain A: Classifier (保持 V3，快且稳) ---
 def classify_intent(text):
-    # 降低上下文长度，防止超时
     prompt = f"""
     Analyze the content type. First 800 chars: {text[:800]}
     Return JSON: {{ "type": "Spanish" }} OR {{ "type": "General" }}
@@ -61,6 +54,8 @@ def classify_intent(text):
     return safe_json_parse(res, "Classify") or {"type": "General"}
 
 # --- 🧠 Brain B: Spanish Logic ---
+
+# 1. 查重 (保持 V3)
 def check_topic_match(new_text, existing_pages):
     if not existing_pages: return {"match": False}
     titles_str = "\n".join([f"ID: {p['id']}, Title: {p['title']}" for p in existing_pages])
@@ -71,21 +66,33 @@ def check_topic_match(new_text, existing_pages):
     res = get_completion(prompt)
     return safe_json_parse(res, "Topic Match") or {"match": False}
 
+# 2. 内容生成 (🌟 修改点 2: 升级为 R1 深度思考)
 def generate_spanish_content(text):
-    # ⚠️ 缩减到 12000 字
+    print("🚀 启动 DeepSeek-R1 进行语言分析...")
     prompt = f"""
-    You are a Spanish teacher. Process this content: {text[:12000]}
+    You are a Spanish teacher. Process this content: {text[:20000]}
+    
     Output JSON (No Markdown):
     {{
-        "title": "Title", "category": "Vocab", "summary": "Summary",
+        "title": "Title", 
+        "category": "Vocab", 
+        "summary": "Summary",
         "blocks": [
             {{ "type": "heading", "content": "1. Vocab" }},
             {{ "type": "table", "content": {{ "headers": ["ES","CN","Ex"], "rows": [["a","b","c"]] }} }}
         ]
     }}
     """
-    return safe_json_parse(get_completion(prompt), "Spanish Content")
+    # 使用 R1 获取内容和思考过程
+    content, reasoning = get_reasoning_completion(prompt)
+    
+    # 打印思考链 (Debug用)
+    if reasoning:
+        print(f"\n🧠 [R1 思考链]:\n{reasoning[:500]}...\n")
+    
+    return safe_json_parse(content, "Spanish Content R1")
 
+# 3. 合并策略 (保持 V3)
 def decide_merge_strategy(new_text, structure, tables):
     prompt = f"""
     Merge Logic. Structure: {structure}. Tables: {json.dumps(tables)}. New: {new_text[:800]}
@@ -93,13 +100,12 @@ def decide_merge_strategy(new_text, structure, tables):
     """
     return safe_json_parse(get_completion(prompt), "Merge Strategy") or {"action": "append_text"}
 
-# --- 🧠 Brain C: General Logic ---
+# --- 🧠 Brain C: General Logic (🌟 修改点 3: 升级为 R1 深度思考) ---
 def process_general_knowledge(text):
-    # ⚠️ 关键修改：将输入长度限制从 25000 降至 12000
-    # 很多 LLM (如 GPT-3.5) 处理不了太长的 Context，会导致返回空或报错
-    truncated_text = text[:12000]
+    print("🚀 启动 DeepSeek-R1 进行深度阅读...")
     
-    print(f"🧠 Sending {len(truncated_text)} chars to LLM...")
+    # 注意：这里我们可以稍微放宽字数限制，因为 R1 能力更强，但也别太夸张
+    truncated_text = text[:15000]
     
     prompt = f"""
     You are a professional research assistant. 
@@ -123,12 +129,15 @@ def process_general_knowledge(text):
     }}
     """
     
-    response = get_completion(prompt)
+    # 使用 R1
+    content, reasoning = get_reasoning_completion(prompt)
     
-    # 使用增强版解析器
-    return safe_json_parse(response, "General Knowledge")
+    if reasoning:
+        print(f"\n🧠 [R1 思考链]:\n{reasoning[:500]}...\n")
+    
+    return safe_json_parse(content, "General Knowledge R1")
 
-# --- 🎩 Main Workflow ---
+# --- 🎩 Main Workflow (保持完全一致) ---
 def main_workflow(user_input=None, uploaded_file=None):
     processed_text = ""
     original_url = None
@@ -194,9 +203,8 @@ def main_workflow(user_input=None, uploaded_file=None):
         print("🧠 Generating notes (Deep Analysis)...")
         data = process_general_knowledge(processed_text)
         
-        # 🔥 现在的逻辑是：如果 data 为 None，上面 safe_json_parse 已经打印了具体原因
         if not data:
-            raise Exception("❌ AI returned empty or invalid JSON. (See logs for details)")
+            raise Exception("❌ AI failed to generate valid JSON notes. (See logs for details)")
 
         if match.get('match'):
             print(f"💡 Topic Exists! Merging into: 《{match.get('page_title')}》")
