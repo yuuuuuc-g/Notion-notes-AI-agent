@@ -1,4 +1,5 @@
 import os
+import requests # ✅ 引入 requests 库，直接由底层发请求
 from notion_client import Client
 
 # === 配置 ===
@@ -7,9 +8,10 @@ NOTION_TOKEN = os.environ.get("NOTION_TOKEN")
 DB_SPANISH_ID = os.environ.get("NOTION_DATABASE_ID")          
 DB_GENERAL_ID = os.environ.get("NOTION_DATABASE_ID_GENERAL")  
 
+# 初始化客户端 (用于创建页面，这部分目前看来是正常的)
 notion = Client(auth=NOTION_TOKEN)
 
-# --- 核心工具：排版引擎 (找回了这个关键函数) ---
+# --- 核心工具：排版引擎 (保持不变) ---
 def clean_text(text):
     if text is None: return ""
     return str(text)[:2000]
@@ -17,7 +19,6 @@ def clean_text(text):
 def build_content_blocks(summary, blocks):
     """
     负责构建复杂的 Notion 区块结构 (Heading, Table, List, Callout)
-    兼容：既能处理字典列表(复杂结构)，也能处理字符串列表(简单Key Points)
     """
     children = []
     
@@ -38,7 +39,7 @@ def build_content_blocks(summary, blocks):
         return children
 
     for block in blocks:
-        # A. 容错处理：如果是字符串 (通用模式 key_points 的情况)，直接转为 bullet
+        # A. 容错处理：如果是字符串 (通用模式 key_points 的情况)
         if isinstance(block, str):
             children.append({
                 "object": "block",
@@ -66,7 +67,6 @@ def build_content_blocks(summary, blocks):
             })
             
         elif b_type == 'list':
-            # 处理列表内容
             if isinstance(content, list):
                 for item in content:
                     children.append({
@@ -76,13 +76,10 @@ def build_content_blocks(summary, blocks):
                     })
         
         elif b_type == 'table':
-            # === 表格构建逻辑 (最复杂的部分) ===
             table_rows = []
-            # 表头
             if 'headers' in content:
                 header_cells = [[{"text": {"content": str(h)}}] for h in content['headers']]
                 table_rows.append({"type": "table_row", "table_row": {"cells": header_cells}})
-            # 数据行
             if 'rows' in content:
                 for row in content['rows']:
                     row_cells = [[{"text": {"content": str(c)}}] for c in row]
@@ -101,30 +98,60 @@ def build_content_blocks(summary, blocks):
 
     return children
 
-# --- 功能函数：查重与获取结构 (完全保留) ---
+# --- ✨ 核心修复：查重函数 (改用 requests 原生请求) ---
 def get_all_page_titles(db_id=DB_SPANISH_ID):
-    """获取现有笔记标题用于查重"""
+    """
+    获取现有笔记标题用于查重
+    ⚠️ 修复：不使用 SDK，改用 requests 直接调用 API，避免 Attribute Error
+    """
+    if not db_id:
+        return []
+
+    url = f"https://api.notion.com/v1/databases/{db_id}/query"
+    headers = {
+        "Authorization": f"Bearer {NOTION_TOKEN}",
+        "Notion-Version": "2022-06-28", # 使用稳定的 API 版本
+        "Content-Type": "application/json"
+    }
+    
     try:
-        response = notion.databases.query(database_id=db_id, filter_properties=["title"])
+        # 只请求标题，减少数据量
+        payload = {
+            "page_size": 100,
+            # filter_properties 在 query 接口中可能不被所有版本支持，这里为了稳健先去掉
+            # 我们直接拉取前100条（通常够用了）
+        }
+        
+        response = requests.post(url, headers=headers, json=payload, timeout=10)
+        
+        if response.status_code != 200:
+            print(f"⚠️ Notion API Error: {response.status_code} - {response.text}")
+            return []
+
+        data = response.json()
         results = []
-        for page in response.get("results", []):
+        
+        for page in data.get("results", []):
             try:
-                # 兼容不同的 Title 字段名 (Name, Spanish, Title)
                 props = page.get("properties", {})
-                # 寻找类型为 title 的属性
+                # 寻找类型为 title 的属性 (兼容不同列名)
                 title_prop = next((v for k, v in props.items() if v["type"] == "title"), None)
+                
                 if title_prop and title_prop.get("title"):
-                    title_text = title_prop["title"][0]["plain_text"]
-                    results.append({"id": page["id"], "title": title_text})
+                    # 提取纯文本标题
+                    title_text = "".join([t["plain_text"] for t in title_prop["title"]])
+                    if title_text:
+                        results.append({"id": page["id"], "title": title_text})
             except:
                 continue
+                
         return results
     except Exception as e:
-        print(f"❌ Error fetching titles: {e}")
+        print(f"❌ Error fetching titles (Requests): {e}")
         return []
 
 def get_page_structure(page_id):
-    """获取页面现有的结构 (用于判断是否插入表格)"""
+    """获取页面现有的结构"""
     try:
         blocks = notion.blocks.children.list(block_id=page_id).get("results", [])
         structure_desc = []
@@ -143,7 +170,6 @@ def get_page_structure(page_id):
 # --- 核心操作：创建与更新 ---
 
 def create_study_note(title, category, summary, blocks, original_url=None):
-    """创建西语笔记 (完整版，支持 blocks)"""
     print(f"✍️ Creating Study Note: {title}...")
     children = build_content_blocks(summary, blocks)
     
@@ -159,7 +185,7 @@ def create_study_note(title, category, summary, blocks, original_url=None):
             properties={
                 "Name": {"title": [{"text": {"content": clean_text(title)}}]},
                 "Tags": {"multi_select": [{"name": "Spanish"}]},
-                "Category": {"select": {"name": category}}, # 需要数据库有 Category 列 (Select)
+                "Category": {"select": {"name": category}},
                 "URL": {"url": original_url if original_url else None}
             },
             children=children
@@ -171,20 +197,18 @@ def create_study_note(title, category, summary, blocks, original_url=None):
         return False
 
 def create_general_note(data, original_url=None):
-    """创建通用笔记"""
     title = data.get('title', 'Unnamed')
     print(f"✍️ Creating General Note: {title}...")
     
-    # 将简单的 key_points 列表传给 build_content_blocks 处理
     blocks = data.get('key_points', []) 
-    
     children = build_content_blocks(data.get('summary'), blocks)
 
-    # 插入一个小标题
-    children.insert(1, {
-        "object": "block", "type": "heading_3",
-        "heading_3": {"rich_text": [{"text": {"content": "📝 Key Takeaways"}}], "color": "blue"}
-    })
+    # 插入小标题
+    if len(children) > 1:
+        children.insert(1, {
+            "object": "block", "type": "heading_3",
+            "heading_3": {"rich_text": [{"text": {"content": "📝 Key Takeaways"}}], "color": "blue"}
+        })
 
     if original_url:
         children.append({
@@ -193,6 +217,10 @@ def create_general_note(data, original_url=None):
         })
 
     try:
+        if not DB_GENERAL_ID:
+            print("❌ Error: DB_GENERAL_ID is missing.")
+            return False
+
         notion.pages.create(
             parent={"database_id": DB_GENERAL_ID},
             properties={
@@ -210,7 +238,6 @@ def create_general_note(data, original_url=None):
         return False
 
 def append_to_page(page_id, summary, blocks):
-    """追加内容到现有页面 (找回了这个功能)"""
     print(f"➕ Appending content to page {page_id}...")
     children = []
     children.append({"object": "block", "type": "divider", "divider": {}})
@@ -223,7 +250,6 @@ def append_to_page(page_id, summary, blocks):
         print(f"❌ Append failed: {e}")
 
 def add_row_to_table(table_id, row_data):
-    """向现有表格插入行 (找回了这个功能)"""
     print(f"➕ Inserting row into table {table_id}...")
     try:
         row_cells = [[{"text": {"content": str(cell)}}] for cell in row_data]

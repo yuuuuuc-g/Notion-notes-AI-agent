@@ -1,7 +1,8 @@
+streamlit
 openai
 python-dotenv
-notion-client
-streamlit
+notion-client>=2.0.0
+httpx
 requests
-yt-dlp
-pymupdf
+beautifulsoup4
+PyPDF2
