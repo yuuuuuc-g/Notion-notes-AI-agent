@@ -1,11 +1,11 @@
 import json
 import os
+import re
 from dotenv import load_dotenv
 from llm_client import get_completion
 from web_ops import fetch_url_content
 import notion_ops
 
-# 尝试导入 file_ops
 try:
     from file_ops import read_pdf_content
 except ImportError:
@@ -13,15 +13,52 @@ except ImportError:
 
 load_dotenv()
 
+# --- 🛠️ 核心修复：全能解析器 + 调试日志 ---
+def safe_json_parse(input_data, context=""):
+    """
+    带调试功能的解析器
+    """
+    # 1. 如果是空值
+    if not input_data:
+        print(f"❌ [Error] LLM returned EMPTY response for: {context}")
+        return None
+
+    # 2. 如果已经是字典
+    if isinstance(input_data, dict):
+        return input_data
+    
+    # 3. 如果是字符串
+    try:
+        text = str(input_data).strip()
+        # 调试：打印前100个字符看看 AI 说了啥
+        print(f"🔍 [Debug] LLM Raw Response (First 100 chars): {text[:100]}...")
+        
+        # 清洗
+        clean_text = text.replace("```json", "").replace("```", "")
+        # 有时候 AI 会在 JSON 前面废话，我们尝试提取第一个 { 到最后一个 }
+        start = clean_text.find("{")
+        end = clean_text.rfind("}") + 1
+        if start != -1 and end != -1:
+            clean_text = clean_text[start:end]
+            
+        return json.loads(clean_text)
+    except json.JSONDecodeError as e:
+        print(f"❌ JSON Decode Error: {e}")
+        print(f"👇 Raw content that failed:\n{input_data}")
+        return None
+    except Exception as e:
+        print(f"❌ Unknown Parse Error: {e}")
+        return None
+
 # --- 🧠 Brain A: Classifier ---
 def classify_intent(text):
+    # 降低上下文长度，防止超时
     prompt = f"""
     Analyze the content type. First 800 chars: {text[:800]}
     Return JSON: {{ "type": "Spanish" }} OR {{ "type": "General" }}
     """
-    response = get_completion(prompt)
-    if "Spanish" in response: return {"type": "Spanish"}
-    return {"type": "General"}
+    res = get_completion(prompt)
+    return safe_json_parse(res, "Classify") or {"type": "General"}
 
 # --- 🧠 Brain B: Spanish Logic ---
 def check_topic_match(new_text, existing_pages):
@@ -31,14 +68,13 @@ def check_topic_match(new_text, existing_pages):
     Library check. Existing: {titles_str}. New: {new_text[:800]}.
     Output JSON: {{ "match": true, "page_id": "...", "page_title": "..." }} OR {{ "match": false }}
     """
-    try:
-        return json.loads(get_completion(prompt).replace("```json", "").replace("```", "").strip())
-    except:
-        return {"match": False}
+    res = get_completion(prompt)
+    return safe_json_parse(res, "Topic Match") or {"match": False}
 
 def generate_spanish_content(text):
+    # ⚠️ 缩减到 12000 字
     prompt = f"""
-    Spanish Teacher Mode. Content: {text[:15000]}
+    You are a Spanish teacher. Process this content: {text[:12000]}
     Output JSON (No Markdown):
     {{
         "title": "Title", "category": "Vocab", "summary": "Summary",
@@ -48,41 +84,51 @@ def generate_spanish_content(text):
         ]
     }}
     """
-    try:
-        return json.loads(get_completion(prompt).replace("```json", "").replace("```", "").strip())
-    except:
-        return None
+    return safe_json_parse(get_completion(prompt), "Spanish Content")
 
 def decide_merge_strategy(new_text, structure, tables):
     prompt = f"""
-    Merge Logic. Structure: {structure}. Tables: {json.dumps(tables)}. New: {new_text[:1000]}
+    Merge Logic. Structure: {structure}. Tables: {json.dumps(tables)}. New: {new_text[:800]}
     Output JSON: {{ "action": "insert_row", "table_id": "...", "row_data": [...] }} OR {{ "action": "append_text" }}
     """
-    try:
-        return json.loads(get_completion(prompt).replace("```json", "").replace("```", "").strip())
-    except:
-        return {"action": "append_text"}
+    return safe_json_parse(get_completion(prompt), "Merge Strategy") or {"action": "append_text"}
 
 # --- 🧠 Brain C: General Logic ---
 def process_general_knowledge(text):
+    # ⚠️ 关键修改：将输入长度限制从 25000 降至 12000
+    # 很多 LLM (如 GPT-3.5) 处理不了太长的 Context，会导致返回空或报错
+    truncated_text = text[:12000]
+    
+    print(f"🧠 Sending {len(truncated_text)} chars to LLM...")
+    
     prompt = f"""
-    Research Assistant. Analyze deeply: {text[:25000]} 
-    **CRITICAL**: Be comprehensive. 8-15 key points. 100+ words each.
-    Output JSON:
+    You are a professional research assistant. 
+    Analyze the following content deeply: 
+    
+    {truncated_text}
+    
+    **CRITICAL INSTRUCTION**: 
+    1. Output strictly valid JSON.
+    2. Do NOT summarize too briefly. 
+    
+    JSON Format:
     {{
         "title": "Chinese Title",
-        "summary": "Detailed Chinese Summary",
+        "summary": "Chinese Summary (Detailed)",
         "tags": ["Tag1", "Tag2"],
-        "key_points": ["Point 1...", "Point 2..."]
+        "key_points": [
+            "Point 1: Detailed explanation...",
+            "Point 2: Detailed explanation..."
+        ]
     }}
     """
-    try:
-        return json.loads(get_completion(prompt).replace("```json", "").replace("```", "").strip())
-    except Exception as e:
-        print(f"LLM JSON Error: {e}")
-        return None
+    
+    response = get_completion(prompt)
+    
+    # 使用增强版解析器
+    return safe_json_parse(response, "General Knowledge")
 
-# --- 🎩 Main Workflow (Strict Error Handling) ---
+# --- 🎩 Main Workflow ---
 def main_workflow(user_input=None, uploaded_file=None):
     processed_text = ""
     original_url = None
@@ -95,7 +141,6 @@ def main_workflow(user_input=None, uploaded_file=None):
         print("📂 Reading PDF...")
         processed_text = read_pdf_content(uploaded_file)
         if not processed_text:
-            # 🔥 关键修改：如果没有读到字，直接抛出异常，让 UI 变红
             raise Exception("❌ PDF is empty or unreadable (might be an image scan).")
             
     elif user_input:
@@ -138,7 +183,7 @@ def main_workflow(user_input=None, uploaded_file=None):
             print("🆕 Creating New Spanish Note...")
             data = generate_spanish_content(processed_text)
             if data:
-                res = notion_ops.create_study_note(data.get('title'), data.get('category'), data.get('summary'), data.get('blocks'), original_url)
+                res = notion_ops.create_study_note(data.get('title'), data.get('category', 'General'), data.get('summary'), data.get('blocks'), original_url)
                 if not res: raise Exception("Failed to create Notion page.")
 
     else:
@@ -149,9 +194,9 @@ def main_workflow(user_input=None, uploaded_file=None):
         print("🧠 Generating notes (Deep Analysis)...")
         data = process_general_knowledge(processed_text)
         
+        # 🔥 现在的逻辑是：如果 data 为 None，上面 safe_json_parse 已经打印了具体原因
         if not data:
-            # 🔥 关键修改：LLM 生成失败也报错
-            raise Exception("❌ AI failed to generate valid JSON notes.")
+            raise Exception("❌ AI returned empty or invalid JSON. (See logs for details)")
 
         if match.get('match'):
             print(f"💡 Topic Exists! Merging into: 《{match.get('page_title')}》")
