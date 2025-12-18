@@ -134,12 +134,21 @@ with st.sidebar:
 #  Main Interface: Visuals & Results
 # ===========================
 
+# === 在 app.py 底部找到这部分 ===
+
 if not submit_btn:
-    st.image(
-    "https://images.unsplash.com/photo-1550537687-c9107a249001?q=80&w=2070&auto=format&fit=crop&ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D",
-    caption="...",
-    use_container_width=True  # 👈 这是一个新的标准参数
-)
+    # 尝试加载本地图片，如果不存在则加载默认网络图（作为兜底）
+    import os
+    if os.path.exists("banner.jpg"):
+        st.image("banner.jpg", caption="Knowledge is power.", use_container_width=True)
+    else:
+        # 这是一个备用的网络图片链接
+        st.image(
+            "https://cdn.pixabay.com/photo/2016/02/16/21/07/books-1204029_1280.jpg",
+            caption="Knowledge is a universe waiting to be explored.",
+            use_container_width=True
+        )
+        
     st.info("👈 Please provide a URL, text, or upload a PDF in the sidebar to begin.")
 
 
