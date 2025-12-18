@@ -2,8 +2,7 @@ import json
 import os
 import re
 from dotenv import load_dotenv
-# 🌟 修改点 1: 导入 R1 的调用函数
-from llm_client import get_completion, get_reasoning_completion
+from llm_client import get_completion, get_reasoning_completion # 导入 R1 函数
 from web_ops import fetch_url_content
 import notion_ops
 
@@ -14,7 +13,7 @@ except ImportError:
 
 load_dotenv()
 
-# --- 🛠️ 核心修复：全能解析器 (保持不变) ---
+# --- 🛠️ 核心修复：全能解析器 ---
 def safe_json_parse(input_data, context=""):
     """
     带调试功能的解析器
@@ -28,8 +27,6 @@ def safe_json_parse(input_data, context=""):
     
     try:
         text = str(input_data).strip()
-        print(f"🔍 [Debug] LLM Raw Response (First 100 chars): {text[:100]}...")
-        
         clean_text = text.replace("```json", "").replace("```", "")
         start = clean_text.find("{")
         end = clean_text.rfind("}") + 1
@@ -44,7 +41,7 @@ def safe_json_parse(input_data, context=""):
         print(f"❌ Unknown Parse Error: {e}")
         return None
 
-# --- 🧠 Brain A: Classifier (保持 V3，快且稳) ---
+# --- 🧠 Brain A: Classifier (保持 V3，因为它够快) ---
 def classify_intent(text):
     prompt = f"""
     Analyze the content type. First 800 chars: {text[:800]}
@@ -53,9 +50,7 @@ def classify_intent(text):
     res = get_completion(prompt)
     return safe_json_parse(res, "Classify") or {"type": "General"}
 
-# --- 🧠 Brain B: Spanish Logic ---
-
-# 1. 查重 (保持 V3)
+# --- 🧠 Brain B: Spanish Logic (升级为 R1) ---
 def check_topic_match(new_text, existing_pages):
     if not existing_pages: return {"match": False}
     titles_str = "\n".join([f"ID: {p['id']}, Title: {p['title']}" for p in existing_pages])
@@ -63,14 +58,16 @@ def check_topic_match(new_text, existing_pages):
     Library check. Existing: {titles_str}. New: {new_text[:800]}.
     Output JSON: {{ "match": true, "page_id": "...", "page_title": "..." }} OR {{ "match": false }}
     """
-    res = get_completion(prompt)
+    res = get_completion(prompt) # 查重比较简单，V3 够用
     return safe_json_parse(res, "Topic Match") or {"match": False}
 
-# 2. 内容生成 (🌟 修改点 2: 升级为 R1 深度思考)
 def generate_spanish_content(text):
+    """
+    [R1 升级版] 使用推理模型提取西语知识
+    """
     print("🚀 启动 DeepSeek-R1 进行语言分析...")
     prompt = f"""
-    You are a Spanish teacher. Process this content: {text[:20000]}
+    You are a Spanish teacher. Process this content: {text[:15000]}
     
     Output JSON (No Markdown):
     {{
@@ -83,16 +80,14 @@ def generate_spanish_content(text):
         ]
     }}
     """
-    # 使用 R1 获取内容和思考过程
+    # 🌟 调用 R1
     content, reasoning = get_reasoning_completion(prompt)
     
-    # 打印思考链 (Debug用)
-    if reasoning:
-        print(f"\n🧠 [R1 思考链]:\n{reasoning[:500]}...\n")
+    # 打印思考过程 (可选：如果你想看它在想什么)
+    print(f"\n🧠 [R1 思考链]:\n{reasoning[:500]}...\n")
     
     return safe_json_parse(content, "Spanish Content R1")
 
-# 3. 合并策略 (保持 V3)
 def decide_merge_strategy(new_text, structure, tables):
     prompt = f"""
     Merge Logic. Structure: {structure}. Tables: {json.dumps(tables)}. New: {new_text[:800]}
@@ -100,18 +95,16 @@ def decide_merge_strategy(new_text, structure, tables):
     """
     return safe_json_parse(get_completion(prompt), "Merge Strategy") or {"action": "append_text"}
 
-# --- 🧠 Brain C: General Logic (🌟 修改点 3: 升级为 R1 深度思考) ---
+# --- 🧠 Brain C: General Logic (升级为 R1) ---
 def process_general_knowledge(text):
+    """
+    [R1 升级版] 使用推理模型进行深度阅读
+    """
     print("🚀 启动 DeepSeek-R1 进行深度阅读...")
-    
-    # 注意：这里我们可以稍微放宽字数限制，因为 R1 能力更强，但也别太夸张
-    truncated_text = text[:15000]
-    
     prompt = f"""
     You are a professional research assistant. 
     Analyze the following content deeply: 
-    
-    {truncated_text}
+    {text[:12000]} 
     
     **CRITICAL INSTRUCTION**: 
     1. Output strictly valid JSON.
@@ -129,15 +122,14 @@ def process_general_knowledge(text):
     }}
     """
     
-    # 使用 R1
+    # 🌟 调用 R1
     content, reasoning = get_reasoning_completion(prompt)
     
-    if reasoning:
-        print(f"\n🧠 [R1 思考链]:\n{reasoning[:500]}...\n")
+    print(f"\n🧠 [R1 思考链]:\n{reasoning[:500]}...\n")
     
     return safe_json_parse(content, "General Knowledge R1")
 
-# --- 🎩 Main Workflow (保持完全一致) ---
+# --- 🎩 Main Workflow ---
 def main_workflow(user_input=None, uploaded_file=None):
     processed_text = ""
     original_url = None
@@ -146,12 +138,10 @@ def main_workflow(user_input=None, uploaded_file=None):
     if uploaded_file:
         if not read_pdf_content:
             raise Exception("❌ file_ops.py not found or failed to import.")
-        
         print("📂 Reading PDF...")
         processed_text = read_pdf_content(uploaded_file)
         if not processed_text:
-            raise Exception("❌ PDF is empty or unreadable (might be an image scan).")
-            
+            raise Exception("❌ PDF is empty or unreadable.")
     elif user_input:
         if user_input.strip().startswith("http"):
             original_url = user_input.strip()
@@ -204,7 +194,7 @@ def main_workflow(user_input=None, uploaded_file=None):
         data = process_general_knowledge(processed_text)
         
         if not data:
-            raise Exception("❌ AI failed to generate valid JSON notes. (See logs for details)")
+            raise Exception("❌ AI failed to generate valid JSON notes.")
 
         if match.get('match'):
             print(f"💡 Topic Exists! Merging into: 《{match.get('page_title')}》")
@@ -215,3 +205,4 @@ def main_workflow(user_input=None, uploaded_file=None):
             if not res: raise Exception("Failed to write to Notion (Check DB ID).")
 
     print("✅ Processing Complete!")
+    

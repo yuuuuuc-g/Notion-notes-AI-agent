@@ -8,10 +8,10 @@ NOTION_TOKEN = os.environ.get("NOTION_TOKEN")
 DB_SPANISH_ID = os.environ.get("NOTION_DATABASE_ID")          
 DB_GENERAL_ID = os.environ.get("NOTION_DATABASE_ID_GENERAL")  
 
-# 初始化客户端 (用于创建页面，这部分目前看来是正常的)
+# 初始化客户端
 notion = Client(auth=NOTION_TOKEN)
 
-# --- 核心工具：排版引擎 (保持不变) ---
+# --- 核心工具：排版引擎 ---
 def clean_text(text):
     if text is None: return ""
     return str(text)[:2000]
