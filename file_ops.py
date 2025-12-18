@@ -1,28 +1,30 @@
-import fitz  # PyMuPDF
+import PyPDF2
+import io
 
 def read_pdf_content(uploaded_file):
     """
-    读取 Streamlit 上传的 PDF 文件并转换为文本
+    读取 Streamlit 上传的 PDF 文件并提取文本
     """
-    print(f"📂 正在解析 PDF 文件: {uploaded_file.name}...")
     try:
-        # 1. 读取二进制流
-        bytes_data = uploaded_file.read()
+        # 必须重置指针，防止读取空内容
+        uploaded_file.seek(0)
         
-        # 2. 使用 fitz 打开
-        # stream 参数允许直接从内存读取，不需要存到硬盘
-        doc = fitz.open(stream=bytes_data, filetype="pdf")
+        reader = PyPDF2.PdfReader(uploaded_file)
+        text = []
         
-        text_content = []
-        # 3. 遍历每一页提取文本
-        for page in doc:
-            text_content.append(page.get_text())
+        # 遍历每一页提取文本
+        for page in reader.pages:
+            content = page.extract_text()
+            if content:
+                text.append(content)
+        
+        full_text = "\n".join(text)
+        
+        # 如果提取出的内容太少（说明可能是纯图片PDF），则报错
+        if len(full_text.strip()) < 50:
+            return None
             
-        full_text = "\n".join(text_content)
-        
-        print(f"✅ PDF parsed successfully. Total pages: {len(doc)}. Characters extracted: {len(full_text)}")
-        return f"【来源：PDF 文件 ({uploaded_file.name})】\n{full_text}"
-        
+        return full_text
     except Exception as e:
-        print(f"❌ PDF 解析失败: {e}")
+        print(f"❌ PDF Read Error: {e}")
         return None
