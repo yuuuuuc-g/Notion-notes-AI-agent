@@ -2,7 +2,8 @@ streamlit
 openai
 python-dotenv
 notion-client>=2.0.0
-httpx
 requests
+httpx
 beautifulsoup4
 PyPDF2
+yt-dlp
