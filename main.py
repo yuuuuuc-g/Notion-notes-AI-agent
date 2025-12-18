@@ -2,10 +2,9 @@ import json
 import os
 import re
 from dotenv import load_dotenv
-from llm_client import get_completion, get_reasoning_completion # 导入 R1 函数
+from llm_client import get_completion, get_reasoning_completion
 from web_ops import fetch_url_content
 import notion_ops
-import podcast_ops
 
 try:
     from file_ops import read_pdf_content
@@ -14,35 +13,26 @@ except ImportError:
 
 load_dotenv()
 
+import podcast_ops 
+
 # --- 🛠️ 核心修复：全能解析器 ---
 def safe_json_parse(input_data, context=""):
-    """
-    带调试功能的解析器
-    """
     if not input_data:
         print(f"❌ [Error] LLM returned EMPTY response for: {context}")
         return None
-
-    if isinstance(input_data, dict):
-        return input_data
-    
+    if isinstance(input_data, dict): return input_data
     try:
         text = str(input_data).strip()
         clean_text = text.replace("```json", "").replace("```", "")
         start = clean_text.find("{")
         end = clean_text.rfind("}") + 1
-        if start != -1 and end != -1:
-            clean_text = clean_text[start:end]
-            
+        if start != -1 and end != -1: clean_text = clean_text[start:end]
         return json.loads(clean_text)
-    except json.JSONDecodeError as e:
-        print(f"❌ JSON Decode Error: {e}")
-        return None
     except Exception as e:
-        print(f"❌ Unknown Parse Error: {e}")
+        print(f"❌ Parse Error: {e}")
         return None
 
-# --- 🧠 Brain A: Classifier (保持 V3，因为它够快) ---
+# --- 🧠 Brain A: Classifier ---
 def classify_intent(text):
     prompt = f"""
     Analyze the content type. First 800 chars: {text[:800]}
@@ -51,7 +41,7 @@ def classify_intent(text):
     res = get_completion(prompt)
     return safe_json_parse(res, "Classify") or {"type": "General"}
 
-# --- 🧠 Brain B: Spanish Logic (升级为 R1) ---
+# --- 🧠 Brain B: Spanish Logic ---
 def check_topic_match(new_text, existing_pages):
     if not existing_pages: return {"match": False}
     titles_str = "\n".join([f"ID: {p['id']}, Title: {p['title']}" for p in existing_pages])
@@ -59,17 +49,13 @@ def check_topic_match(new_text, existing_pages):
     Library check. Existing: {titles_str}. New: {new_text[:800]}.
     Output JSON: {{ "match": true, "page_id": "...", "page_title": "..." }} OR {{ "match": false }}
     """
-    res = get_completion(prompt) # 查重比较简单，V3 够用
+    res = get_completion(prompt)
     return safe_json_parse(res, "Topic Match") or {"match": False}
 
 def generate_spanish_content(text):
-    """
-    [R1 升级版] 使用推理模型提取西语知识
-    """
     print("🚀 启动 DeepSeek-R1 进行语言分析...")
     prompt = f"""
     You are a Spanish teacher. Process this content: {text[:15000]}
-    
     Output JSON (No Markdown):
     {{
         "title": "Title", 
@@ -81,12 +67,8 @@ def generate_spanish_content(text):
         ]
     }}
     """
-    # 🌟 调用 R1
     content, reasoning = get_reasoning_completion(prompt)
-    
-    # 打印思考过程 (可选：如果你想看它在想什么)
-    print(f"\n🧠 [R1 思考链]:\n{reasoning[:500]}...\n")
-    
+    if reasoning: print(f"\n🧠 [R1 思考链]:\n{reasoning[:500]}...\n")
     return safe_json_parse(content, "Spanish Content R1")
 
 def decide_merge_strategy(new_text, structure, tables):
@@ -96,55 +78,19 @@ def decide_merge_strategy(new_text, structure, tables):
     """
     return safe_json_parse(get_completion(prompt), "Merge Strategy") or {"action": "append_text"}
 
-# --- 🧠 Brain C: General Logic (升级为 R1) ---
+# --- 🧠 Brain C: General Logic ---
 def process_general_knowledge(text):
-    """
-    [R1 升级版] 使用推理模型进行深度阅读
-    """
     print("🚀 启动 DeepSeek-R1 进行深度阅读...")
     prompt = f"""
-    You are a professional research assistant. 
-    Analyze the following content deeply: 
-    {text[:12000]} 
-    
-    **CRITICAL INSTRUCTION**: 
-    1. Output strictly valid JSON.
-    2. Do NOT summarize too briefly. 
-    
-    JSON Format:
+    You are a professional research assistant. Analyze: {text[:15000]} 
+    Output strictly JSON:
     {{
-        "title": "Chinese Title",
-        "summary": "Chinese Summary (Detailed)",
-        "tags": ["Tag1", "Tag2"],
-        "key_points": [
-            "Point 1: Detailed explanation...",
-            "Point 2: Detailed explanation..."
-        ]
+        "title": "Chinese Title", "summary": "Chinese Summary", "tags": ["Tag1"], "key_points": ["Point 1..."]
     }}
     """
-    
-    # 🌟 调用 R1
     content, reasoning = get_reasoning_completion(prompt)
-    
-    print(f"\n🧠 [R1 思考链]:\n{reasoning[:500]}...\n")
-    
+    if reasoning: print(f"\n🧠 [R1 思考链]:\n{reasoning[:500]}...\n")
     return safe_json_parse(content, "General Knowledge R1")
-
-# --- 辅助：播客生成流水线 ---
-def process_podcast_pipeline(text_content, page_id):
-    """
-    处理播客的生成与归档
-    """
-    print("\n🎙️ 启动播客生成流水线...")
-    
-    # 1. 生成剧本 + 音频
-    script, audio_path = podcast_ops.run_podcast_workflow(text_content)
-    
-    if script and page_id:
-        # 2. 将剧本存入 Notion
-        notion_ops.append_podcast_script(page_id, script)
-    
-    return audio_path
 
 # --- 🎩 Main Workflow ---
 def main_workflow(user_input=None, uploaded_file=None):
@@ -173,7 +119,7 @@ def main_workflow(user_input=None, uploaded_file=None):
     content_type = intent.get('type', 'General')
     print(f"👉 Type: {content_type}")
 
-    current_page_id = None # 用于记录操作的页面 ID
+    current_page_id = None 
 
     # 3. 处理流程
     if content_type == 'Spanish':
@@ -183,7 +129,7 @@ def main_workflow(user_input=None, uploaded_file=None):
         
         if match.get('match'):
             page_id = match.get('page_id')
-            current_page_id = page_id # 记录 ID
+            current_page_id = page_id
             print(f"💡 Merging into: {match.get('page_title')}")
             
             structure, tables = notion_ops.get_page_structure(page_id)
@@ -201,7 +147,6 @@ def main_workflow(user_input=None, uploaded_file=None):
             print("🆕 Creating New Spanish Note...")
             data = generate_spanish_content(processed_text)
             if data:
-                # 注意：create_study_note 现在返回 page_id
                 current_page_id = notion_ops.create_study_note(data.get('title'), data.get('category', 'General'), data.get('summary'), data.get('blocks'), original_url)
 
     else:
@@ -216,21 +161,39 @@ def main_workflow(user_input=None, uploaded_file=None):
 
         if match.get('match'):
             page_id = match.get('page_id')
-            current_page_id = page_id # 记录 ID
+            current_page_id = page_id
             print(f"💡 Merging into: {match.get('page_title')}")
             notion_ops.append_to_page(page_id, data.get('summary'), data.get('key_points'))
         else:
             print("🆕 Creating General Note...")
-            # 注意：create_general_note 现在返回 page_id
             current_page_id = notion_ops.create_general_note(data, original_url)
 
-    # === 🎙️ 4. 播客生成环节 (新增) ===
+    # === 🎙️ 4. 播客生成 (按需开启) ===
     audio_file = None
-    if current_page_id:
-        # 无论新建还是合并，都生成播客
-        # 把最原始的 processed_text 给 AI 做素材
-        audio_file = process_podcast_pipeline(processed_text, current_page_id)
+    
+    # 🌟 核心判断逻辑：
+    # 1. 必须有写入成功的页面 (current_page_id)
+    # 2. 必须是西语模式 (content_type == 'Spanish')
+    # 3. 必须不是 PDF (not uploaded_file)
+    # 4. 必须不是 URL (not original_url)
+    should_generate_podcast = (
+        current_page_id 
+        and content_type == 'Spanish' 
+        and not uploaded_file 
+        and not original_url
+    )
+
+    if should_generate_podcast:
+        print("🎙️ 检测到纯文本西语笔记，准备制作播客...")
+        # 传入原始文本给 AI 编剧
+        # 这里的 processed_text 是用户粘贴的原始笔记
+        script, audio_file = podcast_ops.run_podcast_workflow(processed_text)
+        
+        if script:
+            # 把剧本存入 Notion 页面
+            notion_ops.append_podcast_script(current_page_id, script)
+    else:
+        print("🔇 跳过播客生成 (非纯文本西语内容)")
     
     print("✅ Processing Complete!")
-    return audio_file # 返回音频路径给 Streamlit 播放
-    
+    return audio_file
