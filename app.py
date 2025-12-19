@@ -7,7 +7,7 @@ from main import main_workflow
 # --- Page Configuration ---
 st.set_page_config(
     page_title="AI Knowledge Agent",
-    page_icon="🧠",
+    page_icon="💠",
     layout="wide",
     initial_sidebar_state="expanded"
 )
@@ -56,11 +56,11 @@ with st.sidebar:
         <h1 style='text-align: left; color: #fff; font-size: 24px; font-family: "Helvetica Neue", sans-serif; font-weight: 700; margin-bottom: 0;'>
             <span>💠</span>
             <span style='background: linear-gradient(45deg, #4facfe 0%, #00f2fe 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent;'>
-               AI Knowledge
+               Knowledge
             </span>
             &nbsp;
             <span style='font-size: 24px; color: #fff; font-weight: 700;'>
-                Agent
+                AI Agent
             </span>
         </h1>
         """, unsafe_allow_html=True)

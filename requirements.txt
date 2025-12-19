@@ -9,4 +9,4 @@ PyPDF2
 yt-dlp
 edge-tts
 pydub
-audioop-lts
+#audioop-lts
