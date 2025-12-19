@@ -11,14 +11,18 @@ except ImportError:
 
 # --- 🛠️ 基础工具 ---
 def safe_json_parse(input_data, context=""):
+    """JSON 解析防呆工具"""
     if not input_data: return None
     if isinstance(input_data, dict): return input_data
     try:
         text = str(input_data).strip()
         clean_text = text.replace("```json", "").replace("```", "")
+        # 尝试提取第一个 { 到最后一个 }
         start = clean_text.find("{")
         end = clean_text.rfind("}") + 1
-        if start != -1 and end != -1: clean_text = clean_text[start:end]
+        if start != -1 and end != -1: 
+            clean_text = clean_text[start:end]
+            
         return json.loads(clean_text)
     except Exception as e:
         print(f"❌ [{context}] JSON Parse Error: {e}")
@@ -32,6 +36,7 @@ class ResearcherAgent:
         print("🕵️‍♂️ Researcher Agent initialized.")
 
     def perceive(self, user_input=None, uploaded_file=None):
+        """1. 感知阶段：获取纯文本"""
         if uploaded_file:
             if not read_pdf_content: raise Exception("Missing file_ops")
             print("📂 Researcher: Reading PDF...")
@@ -46,42 +51,87 @@ class ResearcherAgent:
         return None, None
 
     def analyze_intent(self, text):
+        """2. 认知阶段：意图分类 (三元)"""
         prompt = f"""
         Analyze content type. First 800 chars: {text[:800]}
         Return JSON with "type":
         1. "Spanish": Language learning (Grammar, Vocab, Spanish videos).
         2. "Tech": AI, Coding, Engineering, Software, Hard Science.
         3. "Humanities": Politics, Economy, History, Philosophy, Social Science, News.
+        
+        JSON Example: {{ "type": "Tech" }}
         """
         res = get_completion(prompt)
         return safe_json_parse(res, "Classify") or {"type": "Humanities"}
 
     def consult_memory(self, text):
+        """3. 记忆阶段：查询向量数据库"""
         print("🧠 Researcher: Consulting Knowledge Base (Vector Search)...")
+        # 搜索前1000个字符作为摘要索引
         return vector_ops.search_memory(text[:1000])
 
     def draft_content(self, text, intent_type):
+        """4. 撰写阶段：根据类型生成结构化草稿 (V3 版)"""
+        
+        # === A. 西语模式 (Smart Restructuring) ===
         if intent_type == 'Spanish':
-            print("🚀 Researcher: Drafting Spanish content (R1)...")
+            print("🚀 Researcher: Drafting Spanish content (V3 - Fast)...")
             prompt = f"""
-            You are a Spanish teacher. Process content: {text[:10000]}
-            Output JSON (No Markdown):
+            You are a professional Spanish teacher. 
+            Analyze and restructure the following content into a high-quality study note.
+            
+            Input Content:
+            {text[:12000]}
+            
+            【Your Mission】
+            Not just summarization, but **Lossless Restructuring**.
+            You must preserve all examples, grammar rules, and nuances, but organize them into a clean Notion structure.
+
+            【Formatting Rules】
+            1. **Smart Table**: If you see comparisons (A vs B) or vocabulary lists, MUST use "table" blocks.
+            2. **Smart List**: If you see enumeration or steps, MUST use "list" blocks.
+            3. **Preserve Context**: Do not delete the detailed explanation or scenario descriptions. Use "text" blocks for them.
+            
+            【Output JSON Format】
             {{
-                "title": "Title", "category": "Vocab/Grammar", "summary": "Summary",
+                "title": "Clear and Descriptive Title", 
+                "category": "Grammar/Vocabulary/Reading", 
+                "summary": "Concise Chinese summary.",
                 "blocks": [
-                    {{ "type": "heading", "content": "1. Vocab" }},
-                    {{ "type": "table", "content": {{ "headers": ["ES","CN","Ex"], "rows": [["a","b","c"]] }} }}
+                    {{ "type": "heading", "content": "1. Core Concept" }},
+                    {{ "type": "text", "content": "Detailed explanation..." }},
+                    {{ 
+                        "type": "table", 
+                        "content": {{
+                            "headers": ["Spanish", "Chinese", "Notes"],
+                            "rows": [["Hola", "Hello", "Greeting"], ["Adios", "Bye", "Farewell"]]
+                        }}
+                    }},
+                    {{ "type": "heading", "content": "2. Key Examples" }},
+                    {{ "type": "list", "content": ["Example 1", "Example 2"] }}
                 ]
             }}
             """
-            content, _ = get_reasoning_completion(prompt)
+            # 🌟 修改：降级为 V3，不需要 reasoning
+            content = get_completion(prompt)
             return safe_json_parse(content, "Spanish Draft")
+            
+        # === B. 通用模式 (Tech / Humanities) - 升级版 ===
         else:
-            print("🚀 Researcher: Drafting General content (R1 - Enhanced)...")
+            print("🚀 Researcher: Drafting General content (V3 - Fast)...")
             prompt = f"""
             You are a professional Tech/Research Editor. 
-            Analyze and restructure the content: {text[:12000]} 
-            Output JSON Format:
+            Analyze and restructure the following content into a high-quality Notion page.
+            
+            Input Content: 
+            {text[:15000]} 
+            
+            **CRITICAL INSTRUCTION**: 
+            1. Do NOT summarize too briefly. I need detailed, comprehensive notes.
+            2. **Reconstruct structure**: Use Heading, List, Table to organize knowledge.
+            3. If there is code, try to explain logic in text or list.
+            
+            **Output JSON Format**:
             {{
                 "title": "Article Title",
                 "summary": "Detailed Summary",
@@ -89,11 +139,13 @@ class ResearcherAgent:
                 "blocks": [
                     {{ "type": "heading", "content": "1. Introduction" }},
                     {{ "type": "text", "content": "Detailed explanation..." }},
-                    {{ "type": "list", "content": ["Point A", "Point B"] }}
+                    {{ "type": "list", "content": ["Point A", "Point B"] }},
+                    {{ "type": "table", "content": {{ "headers": ["Col1", "Col2"], "rows": [["Val1", "Val2"]] }} }}
                 ]
             }}
             """
-            content, _ = get_reasoning_completion(prompt)
+            # 🌟 修改：降级为 V3，不需要 reasoning
+            content = get_completion(prompt)
             return safe_json_parse(content, "General Draft")
 
 # ==========================================
@@ -104,56 +156,57 @@ class EditorAgent:
         print("✍️ Editor Agent initialized.")
 
     def decide_merge(self, new_text, existing_page_id):
+        """决策合并策略"""
         structure_text, tables = notion_ops.get_page_structure(existing_page_id)
-        if not tables: return {"action": "append_text"}
+        
+        if not tables:
+            return {"action": "append_text"}
+
         prompt = f"""
-        Editor Logic. Structure: {structure_text}. Tables: {json.dumps(tables)}. New: {new_text[:800]}
+        Editor Logic. 
+        Page Structure: {structure_text}
+        Existing Tables: {json.dumps(tables)}
+        New Content: {new_text[:800]}
+        
+        Task: Can the new content be inserted as a new row into an existing table?
         Output JSON: {{ "action": "insert_row", "table_id": "...", "row_data": [...] }} OR {{ "action": "append_text" }}
         """
         return safe_json_parse(get_completion(prompt), "Merge Decision") or {"action": "append_text"}
 
     def publish(self, draft, intent_type, memory_match, raw_text, original_url=None):
+        """执行发布流程"""
         if not draft:
             print("❌ Editor: Draft is empty.")
             return False
 
         page_title = draft.get('title', 'Untitled')
         page_id = None
-        merge_success = False
+        
+        # 统一获取 blocks
+        blocks = draft.get('blocks') or draft.get('key_points', [])
 
-        # === 尝试合并 (Merge Attempt) ===
+        # === 场景 A: 命中记忆 (合并) ===
         if memory_match.get('match'):
             existing_id = memory_match['page_id']
             existing_title = memory_match['title']
             print(f"💡 Editor: Merging into existing record: 《{existing_title}》")
             
-            # 尝试执行合并操作
             if intent_type == 'Spanish':
                 strategy = self.decide_merge(raw_text, existing_id)
                 if strategy.get('action') == 'insert_row':
-                    merge_success = notion_ops.add_row_to_table(strategy['table_id'], strategy['row_data'])
-                else:
-                    merge_success = notion_ops.append_to_page(existing_id, draft.get('summary'), draft.get('blocks'))
-            else:
-                # 通用模式合并
-                # 兼容 key_points 和 blocks
-                blocks = draft.get('blocks') or draft.get('key_points', [])
-                merge_success = notion_ops.append_to_page(existing_id, draft.get('summary'), blocks)
+                    success = notion_ops.add_row_to_table(strategy['table_id'], strategy['row_data'])
+                    if success: return True 
             
-            if merge_success:
-                page_id = existing_id
-            else:
-                print("⚠️ Editor: Merge failed (Page might be deleted). Switching to CREATE mode...")
-                # 如果合并失败，merge_success 为 False，会自动流转到下面的新建逻辑
+            success = notion_ops.append_to_page(existing_id, draft.get('summary'), blocks)
+            if success: page_id = existing_id
 
-        # === 新建逻辑 (Create) - 只要没合并成功，就新建 ===
-        if not page_id: # 如果上面没拿到 ID (合并失败或本来就是新主题)
+        # === 场景 B: 新建 (Create) ===
+        if not page_id:
             print(f"🆕 Editor: Publishing new edition: 《{page_title}》")
-            blocks = draft.get('blocks') or draft.get('key_points', [])
             
             if intent_type == 'Spanish':
                 page_id = notion_ops.create_study_note(
-                    page_title, 
+                    draft.get('title'), 
                     draft.get('category', 'General'), 
                     draft.get('summary'), 
                     blocks, 
@@ -163,7 +216,7 @@ class EditorAgent:
                 target_db = notion_ops.DB_TECH_ID if intent_type == 'Tech' else notion_ops.DB_HUMANITIES_ID
                 page_id = notion_ops.create_general_note(draft, target_db, original_url)
 
-        # === 记忆归档 ===
+        # === 归档阶段：存入向量记忆 ===
         if page_id:
             print("🧠 Editor: Archiving to Vector Memory...")
             vector_ops.add_memory(page_id, raw_text[:2000], page_title, intent_type)
