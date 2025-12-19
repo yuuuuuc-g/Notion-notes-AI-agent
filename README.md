@@ -1,4 +1,5 @@
-🧠 AI Knowledge Agent (Personal Knowledge Pipeline)"Your personal AI editorial team. One Agent to research, one Agent to edit."这是一个基于 多智能体架构 (Multi-Agent Architecture) 的全能知识管理系统。它集成了 RAG (检索增强生成)、向量记忆 (Vector Memory) 和 自动化归档 能力，能够将 PDF、YouTube 视频、网页或文本转化为结构化的 Notion 知识库。🏗️ 系统架构 (System Architecture)本项目采用 Orchestrator-Workers 模式，由 main.py 指挥两个核心智能体协作：graph TD
+🧠 AI Knowledge Agent (Personal Knowledge Pipeline)"Your personal AI editorial team. One Agent to research, one Agent to edit."这是一个基于 多智能体架构 (Multi-Agent Architecture) 的全能知识管理系统。它集成了 RAG (检索增强生成)、向量记忆 (Vector Memory) 和 自动化归档 能力，能够将 PDF、YouTube 视频、网页或文本转化为结构化的 Notion 知识库。🏗️ 系统架构 (System Architecture)本项目采用 Orchestrator-Workers 模式，由 main.py 指挥两个核心智能体协作：
+graph TD
     User((User)) -->|Input: PDF/URL/Text| UI[Streamlit UI]
     UI -->|Trigger| Orch{Main Orchestrator}
     
@@ -60,4 +61,3 @@ NOTION_DATABASE_ID_TECH="..."     # 科技库
 NOTION_DATABASE_ID_HUMANITIES="..." # 社科库
 3. 启动应用streamlit run app.py
 Powered by DeepSeek, Notion & Streamlit
----
