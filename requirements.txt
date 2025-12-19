@@ -12,3 +12,4 @@ pydub
 audioop-lts
 chromadb
 pysqlite3-binary
+sentence-transformers
