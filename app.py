@@ -7,7 +7,7 @@ from main import main_workflow
 # --- Page Configuration ---
 st.set_page_config(
     page_title="AI Knowledge Agent",
-    page_icon="💠",
+    page_icon="🧠",
     layout="wide",
     initial_sidebar_state="expanded"
 )
@@ -36,19 +36,16 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# --- 🛠️ 状态初始化 (State Init) ---
+# --- 🛠️ 状态初始化 ---
 if "input_area" not in st.session_state:
     st.session_state["input_area"] = ""
 
-# 核心修改：使用计数器来控制 File Uploader 的重置
 if "uploader_key_id" not in st.session_state:
     st.session_state["uploader_key_id"] = 0
 
-# --- 🧹 清除功能的逻辑 (Key Rotation) ---
+# --- 🧹 清除功能 ---
 def clear_inputs():
-    # 1. 清空文本框
     st.session_state["input_area"] = ""
-    # 2. 让上传组件的 ID +1，强制 Streamlit 重新渲染一个空的组件
     st.session_state["uploader_key_id"] += 1
 
 # ===========================
@@ -59,70 +56,49 @@ with st.sidebar:
         <h1 style='text-align: left; color: #fff; font-size: 24px; font-family: "Helvetica Neue", sans-serif; font-weight: 700; margin-bottom: 0;'>
             <span>💠</span>
             <span style='background: linear-gradient(45deg, #4facfe 0%, #00f2fe 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent;'>
-               Knowledge
+               AI Knowledge
             </span>
             &nbsp;
             <span style='font-size: 24px; color: #fff; font-weight: 700;'>
-                AI Agent
+                Agent
             </span>
         </h1>
         """, unsafe_allow_html=True)
     st.markdown("*Your All-in-One Knowledge Partner*")
     st.divider()
 
-    # --- Header & Clear Button ---
     col1, col2 = st.columns([3, 1])
     with col1:
         st.header("📥 Input Source")
     with col2:
-        # 🗑️ 垃圾桶按钮
         st.button("🗑️", on_click=clear_inputs, help="Clear all inputs")
     
-    # --- Input Form ---
     with st.form(key="input_form"):
-        # 1. File Upload 
-        # 核心修改：key 是动态的，每次点击清除按钮，key 就会变，从而清空文件
         dynamic_key = f"file_uploader_{st.session_state['uploader_key_id']}"
-        
-        uploaded_file = st.file_uploader(
-            "📄 Upload PDF Document", 
-            type=["pdf"], 
-            key=dynamic_key 
-        )
-        
-        # 2. Text/URL Input
-        user_input = st.text_area(
-            "🔗 Or paste URL / Text:", 
-            height=200, 
-            key="input_area", # 这个 key 对应 session_state
-            placeholder="Paste URL or Text here..."
-        )
-        
+        uploaded_file = st.file_uploader("📄 Upload PDF Document", type=["pdf"], key=dynamic_key)
+        user_input = st.text_area("🔗 Or paste URL / Text:", height=200, key="input_area", placeholder="Paste URL or Text here...")
         st.divider()
-        
-        # Submit Button
+        # 按钮保持 use_container_width=True，因为按钮不支持 width="stretch" 写法
         submit_btn = st.form_submit_button("🚀 Start Processing", type="primary", use_container_width=True)
 
     st.markdown("---")
     st.markdown("© 2025 AI Knowledge Agent.")
-
 
 # ===========================
 #  Main Interface
 # ===========================
 
 if not submit_btn:
-    # 图片加载逻辑：优先本地，失败则网络
+    # ✅ 修复点：将 use_container_width=True 改为 width="stretch" (针对 st.image)
     if os.path.exists("banner.jpg"):
-        st.image("banner.jpg", caption="Knowledge is power.", use_container_width=True)
+        st.image("banner.jpg", caption="Knowledge is power.", width="stretch")
     else:
         st.image(
             "https://cdn.pixabay.com/photo/2018/03/19/18/20/tea-time-3240766_1280.jpg",
             caption="“Knowledge is a universe waiting to be explored.”",
-            use_container_width=True
+            # 如果不想用 stretch，可以直接删掉这个参数，默认也会自适应
         )
     st.info("👈 Please provide a URL, text, or upload a PDF in the sidebar to begin.")
-
 
 if submit_btn:
     if not user_input and not uploaded_file:
@@ -143,26 +119,18 @@ if submit_btn:
             sys.stdout = StreamlitLogger()
             
             try:
-                
                 # === Core Workflow ===
-                # 接收返回值
-                # audio_path = main_workflow(user_input=user_input, uploaded_file=uploaded_file)
+                main_workflow(user_input=user_input, uploaded_file=uploaded_file)
                 
-                status.update(label="✅ Mission Complete!", state="complete", expanded=False)
-                st.success("🎉 Knowledge saved to Notion!")
+                status.update(label="✅ Mission Complete! Knowledge secured in Notion.", state="complete", expanded=False)
+                st.balloons()
+                st.success("🎉 Successfully processed and saved to your Notion database!")
                 
-                # 🎵 播放音频 (如果有)
-                #if audio_path and os.path.exists(audio_path):
-                #    st.divider()
-                #    st.subheader("🎧 AI Podcast (Mexican & Colombian)")
-                #    st.audio(audio_path)
-                #    st.caption("Generated by DeepSeek-R1 & Edge-TTS")
-                
-                # Success Image
+                # ✅ 修复点：同上
                 st.image(
                     "https://images.unsplash.com/photo-1499750310159-5b5f38e31638?q=80&w=2000&auto=format&fit=crop",
                     caption="Knowledge integrated.",
-                    use_container_width=True
+                    width="stretch"
                 )
 
             except Exception as e:
