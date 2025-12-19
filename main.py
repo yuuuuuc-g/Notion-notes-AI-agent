@@ -5,6 +5,7 @@ from dotenv import load_dotenv
 from llm_client import get_completion, get_reasoning_completion
 from web_ops import fetch_url_content
 import notion_ops
+import podcast_ops 
 
 try:
     from file_ops import read_pdf_content
@@ -12,8 +13,6 @@ except ImportError:
     read_pdf_content = None
 
 load_dotenv()
-
-import podcast_ops 
 
 # --- 🛠️ 核心修复：全能解析器 ---
 def safe_json_parse(input_data, context=""):
@@ -35,8 +34,13 @@ def safe_json_parse(input_data, context=""):
 # --- 🧠 Brain A: Classifier ---
 def classify_intent(text):
     prompt = f"""
-    Analyze the content type. First 800 chars: {text[:800]}
+    Analyze the language and content type. First 800 chars: {text[:800]}
+    
     Return JSON: {{ "type": "Spanish" }} OR {{ "type": "General" }}
+    
+    Logic:
+    1. **Spanish**: Any text written in Spanish language, OR content about learning Spanish.
+    2. **General**: Text written in English/Chinese about Tech, News, etc.
     """
     res = get_completion(prompt)
     return safe_json_parse(res, "Classify") or {"type": "General"}
@@ -55,15 +59,21 @@ def check_topic_match(new_text, existing_pages):
 def generate_spanish_content(text):
     print("🚀 启动 DeepSeek-R1 进行语言分析...")
     prompt = f"""
-    You are a Spanish teacher. Process this content: {text[:15000]}
+    You are a Spanish expert. Process this content: {text[:15000]}
+    
+    The content might be a complex article.
+    1. Summarize it in Chinese.
+    2. Extract key Spanish vocabulary/expressions (even if it's advanced).
+    3. Extract 2-3 key sentences (quotes).
+    
     Output JSON (No Markdown):
     {{
-        "title": "Title", 
-        "category": "Vocab", 
+        "title": "Article Title", 
+        "category": "Reading", 
         "summary": "Summary",
         "blocks": [
-            {{ "type": "heading", "content": "1. Vocab" }},
-            {{ "type": "table", "content": {{ "headers": ["ES","CN","Ex"], "rows": [["a","b","c"]] }} }}
+            {{ "type": "heading", "content": "1. Core Expressions" }},
+            {{ "type": "table", "content": {{ "headers": ["Spanish","Chinese","Context"], "rows": [["Word","Meaning","Context"]] }} }}
         ]
     }}
     """
@@ -82,7 +92,7 @@ def decide_merge_strategy(new_text, structure, tables):
 def process_general_knowledge(text):
     print("🚀 启动 DeepSeek-R1 进行深度阅读...")
     prompt = f"""
-    You are a professional research assistant. Analyze: {text[:15000]} 
+    Research Assistant. Analyze: {text[:15000]} 
     Output strictly JSON:
     {{
         "title": "Chinese Title", "summary": "Chinese Summary", "tags": ["Tag1"], "key_points": ["Point 1..."]
@@ -129,7 +139,7 @@ def main_workflow(user_input=None, uploaded_file=None):
         
         if match.get('match'):
             page_id = match.get('page_id')
-            current_page_id = page_id
+            current_page_id = page_id # ✅ 记录 ID
             print(f"💡 Merging into: {match.get('page_title')}")
             
             structure, tables = notion_ops.get_page_structure(page_id)
@@ -147,6 +157,7 @@ def main_workflow(user_input=None, uploaded_file=None):
             print("🆕 Creating New Spanish Note...")
             data = generate_spanish_content(processed_text)
             if data:
+                # ✅ 这里接收返回值 ID
                 current_page_id = notion_ops.create_study_note(data.get('title'), data.get('category', 'General'), data.get('summary'), data.get('blocks'), original_url)
 
     else:
@@ -161,11 +172,12 @@ def main_workflow(user_input=None, uploaded_file=None):
 
         if match.get('match'):
             page_id = match.get('page_id')
-            current_page_id = page_id
+            current_page_id = page_id # ✅ 记录 ID
             print(f"💡 Merging into: {match.get('page_title')}")
             notion_ops.append_to_page(page_id, data.get('summary'), data.get('key_points'))
         else:
             print("🆕 Creating General Note...")
+            # ✅ 这里接收返回值 ID
             current_page_id = notion_ops.create_general_note(data, original_url)
 
     # === 🎙️ 4. 播客生成 (按需开启) ===
@@ -184,16 +196,21 @@ def main_workflow(user_input=None, uploaded_file=None):
     )
 
     if should_generate_podcast:
-        print("🎙️ 检测到纯文本西语笔记，准备制作播客...")
-        # 传入原始文本给 AI 编剧
-        # 这里的 processed_text 是用户粘贴的原始笔记
+        print("🎙️ Generating Podcast for Spanish text...")
+        # 传入原始文本
         script, audio_file = podcast_ops.run_podcast_workflow(processed_text)
         
         if script:
-            # 把剧本存入 Notion 页面
+            # 追加到 Notion
             notion_ops.append_podcast_script(current_page_id, script)
     else:
-        print("🔇 跳过播客生成 (非纯文本西语内容)")
+        if content_type == 'Spanish':
+            if uploaded_file or original_url:
+                print("🔇 Skipping podcast (File/URL input)")
+            elif not current_page_id:
+                print("🔇 Skipping podcast (Notion write failed)")
+        else:
+            print("🔇 Skipping podcast (Not Spanish content)")
     
     print("✅ Processing Complete!")
     return audio_file
