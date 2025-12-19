@@ -16,27 +16,30 @@ load_dotenv()
 # --- 🛠️ 核心修复：全能解析器 ---
 def safe_json_parse(input_data, context=""):
     if not input_data:
-        print(f"❌ [Error] LLM returned EMPTY response for: {context}")
+        print(f"❌ [Error] {context}: LLM 返回内容为空！")
         return None
     if isinstance(input_data, dict): return input_data
     try:
         text = str(input_data).strip()
-        print(f"🔍 [Debug] LLM Raw Response (First 100 chars): {text[:100]}...")
+        # 调试日志：看看 AI 到底回了什么
+        # print(f"🔍 [Debug Raw] {text[:100]}...") 
         
         clean_text = text.replace("```json", "").replace("```", "")
+        # 寻找 JSON 的起止点
         start = clean_text.find("{")
         end = clean_text.rfind("}") + 1
-        if start != -1 and end != -1: clean_text = clean_text[start:end]
+        if start != -1 and end != -1: 
+            clean_text = clean_text[start:end]
+            
         return json.loads(clean_text)
     except Exception as e:
-        print(f"❌ Parse Error: {e}")
+        print(f"❌ [Error] {context} JSON 解析失败: {e}")
         return None
 
 # --- 🧠 Brain A: Classifier ---
 def classify_intent(text):
     prompt = f"""
     Analyze the content type. First 800 chars: {text[:800]}
-    
     Return JSON with "type":
     1. "Spanish": Language learning (Grammar, Vocab, Spanish videos).
     2. "Tech": AI, Coding, Engineering, Software, Hard Science.
@@ -47,7 +50,7 @@ def classify_intent(text):
     res = get_completion(prompt)
     return safe_json_parse(res, "Classify") or {"type": "Humanities"}
 
-# --- 🧠 Brain B: Spanish Logic (增强版) ---
+# --- 🧠 Brain B: Spanish Logic ---
 def check_topic_match(new_text, existing_pages):
     if not existing_pages: return {"match": False}
     titles_str = "\n".join([f"ID: {p['id']}, Title: {p['title']}" for p in existing_pages])
@@ -59,10 +62,6 @@ def check_topic_match(new_text, existing_pages):
     return safe_json_parse(res, "Topic Match") or {"match": False}
 
 def generate_spanish_content(text):
-    """
-    [R1 升级版] 智能结构化西语笔记
-    不仅仅提取单词，而是根据内容类型（语法/阅读/词汇）进行深度整理。
-    """
     print("🚀 启动 DeepSeek-R1 进行深度语言分析...")
     prompt = f"""
     You are a professional Spanish teacher. 
@@ -72,33 +71,19 @@ def generate_spanish_content(text):
     {text[:15000]}
     
     **Task**:
-    1. Identify the core topic (Grammar rule, Vocabulary list, Cultural insight, or Reading comprehension).
-    2. Create a structured output suitable for a Notion page.
-    3. **Smart Formatting**: 
-       - If it's a comparison (e.g., Ser vs Estar), MUST create a **Table**.
-       - If it's a grammar rule, use **Heading** for the rule and **List** for examples.
-       - If it's a text/video, extract **Core Vocabulary** (Table) and **Key Sentences** (List).
+    1. Identify the core topic.
+    2. Smart Formatting: Use Heading, Table, List, Text blocks.
+    3. **Important**: If the text contains detailed explanations, preserve them as Text blocks. Do not summarize too much.
     
-    **Output JSON Format (Strictly No Markdown)**:
+    **Output JSON Format**:
     {{
-        "title": "Clear and Descriptive Title", 
-        "category": "Grammar/Vocabulary/Reading/Culture", 
-        "summary": "Concise Chinese summary of the content.",
+        "title": "Clear Title", 
+        "category": "Grammar/Vocabulary/Reading", 
+        "summary": "Chinese summary",
         "blocks": [
-            {{ "type": "heading", "content": "1. Core Concept / Main Topic" }},
-            {{ "type": "text", "content": "Detailed explanation of the grammar rule or context..." }},
-            {{ 
-                "type": "table", 
-                "content": {{
-                    "headers": ["Spanish", "Chinese", "Example/Notes"],
-                    "rows": [
-                        ["Concept A", "Meaning A", "Ex 1"],
-                        ["Concept B", "Meaning B", "Ex 2"]
-                    ]
-                }}
-            }},
-            {{ "type": "heading", "content": "2. Key Examples / Conjugations" }},
-            {{ "type": "list", "content": ["Example sentence 1", "Example sentence 2"] }}
+            {{ "type": "heading", "content": "..." }},
+            {{ "type": "text", "content": "..." }},
+            {{ "type": "table", "content": {{ "headers": [...], "rows": [...] }} }}
         ]
     }}
     """
@@ -174,19 +159,30 @@ def main_workflow(user_input=None, uploaded_file=None):
                     notion_ops.add_row_to_table(strategy['table_id'], strategy['row_data'])
                 else:
                     data = generate_spanish_content(processed_text)
-                    if data: notion_ops.append_to_page(page_id, data.get('summary'), data.get('blocks'))
+                    if data: 
+                        notion_ops.append_to_page(page_id, data.get('summary'), data.get('blocks'))
+                    else:
+                        print("❌ 错误: 西语追加内容生成失败 (Data is None)")
             else:
                 data = generate_spanish_content(processed_text)
-                if data: notion_ops.append_to_page(page_id, data.get('summary'), data.get('blocks'))
+                if data: 
+                    notion_ops.append_to_page(page_id, data.get('summary'), data.get('blocks'))
+                else:
+                    print("❌ 错误: 西语追加内容生成失败 (Data is None)")
         else:
             print("🆕 Creating New Spanish Note...")
             data = generate_spanish_content(processed_text)
+            
+            # --- 诊断点 ---
             if data:
-                # create_study_note 现在支持复杂的 blocks 列表，而不仅仅是单词表
+                print(f"📦 数据生成成功，标题: {data.get('title')}")
                 current_page_id = notion_ops.create_study_note(data.get('title'), data.get('category', 'General'), data.get('summary'), data.get('blocks'), original_url)
+            else:
+                print("❌ 严重错误: 西语笔记内容生成失败 (Data is None)！")
+                print("可能原因：1. R1 思考超时 2. 返回格式 JSON 解析挂了")
 
     else:
-        # 通用模式 (Tech / Humanities)
+        # 通用模式
         if content_type == 'Tech':
             print("💻 Tech Mode Activated...")
             target_db_id = notion_ops.DB_TECH_ID
@@ -203,17 +199,17 @@ def main_workflow(user_input=None, uploaded_file=None):
         print("🧠 Generating notes (R1)...")
         data = process_general_knowledge(processed_text)
         
-        if not data: raise Exception("AI failed.")
-
-        if match.get('match'):
-            page_id = match.get('page_id')
-            current_page_id = page_id
-            print(f"💡 Merging into: {match.get('page_title')}")
-            notion_ops.append_to_page(page_id, data.get('summary'), data.get('key_points'))
+        if not data: 
+            print("❌ 严重错误: 通用笔记生成失败 (Data is None)")
         else:
-            print(f"🆕 Creating New {content_type} Note...")
-            current_page_id = notion_ops.create_general_note(data, target_db_id, original_url)
+            if match.get('match'):
+                page_id = match.get('page_id')
+                current_page_id = page_id
+                print(f"💡 Merging into: {match.get('page_title')}")
+                notion_ops.append_to_page(page_id, data.get('summary'), data.get('key_points'))
+            else:
+                print(f"🆕 Creating New {content_type} Note...")
+                current_page_id = notion_ops.create_general_note(data, target_db_id, original_url)
 
-    # 4. 结束 
     print("✅ Processing Complete!")
     return True
