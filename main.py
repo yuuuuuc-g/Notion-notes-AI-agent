@@ -5,7 +5,6 @@ from dotenv import load_dotenv
 from llm_client import get_completion, get_reasoning_completion
 from web_ops import fetch_url_content
 import notion_ops
-import podcast_ops 
 
 try:
     from file_ops import read_pdf_content
@@ -22,6 +21,8 @@ def safe_json_parse(input_data, context=""):
     if isinstance(input_data, dict): return input_data
     try:
         text = str(input_data).strip()
+        print(f"🔍 [Debug] LLM Raw Response (First 100 chars): {text[:100]}...")
+        
         clean_text = text.replace("```json", "").replace("```", "")
         start = clean_text.find("{")
         end = clean_text.rfind("}") + 1
@@ -34,18 +35,19 @@ def safe_json_parse(input_data, context=""):
 # --- 🧠 Brain A: Classifier ---
 def classify_intent(text):
     prompt = f"""
-    Analyze the language and content type. First 800 chars: {text[:800]}
+    Analyze the content type. First 800 chars: {text[:800]}
     
-    Return JSON: {{ "type": "Spanish" }} OR {{ "type": "General" }}
+    Return JSON with "type":
+    1. "Spanish": Language learning (Grammar, Vocab, Spanish videos).
+    2. "Tech": AI, Coding, Engineering, Software, Hard Science.
+    3. "Humanities": Politics, Economy, History, Philosophy, Social Science, News, Culture.
     
-    Logic:
-    1. **Spanish**: Any text written in Spanish language, OR content about learning Spanish.
-    2. **General**: Text written in English/Chinese about Tech, News, etc.
+    JSON Example: {{ "type": "Tech" }}
     """
     res = get_completion(prompt)
-    return safe_json_parse(res, "Classify") or {"type": "General"}
+    return safe_json_parse(res, "Classify") or {"type": "Humanities"}
 
-# --- 🧠 Brain B: Spanish Logic ---
+# --- 🧠 Brain B: Spanish Logic (增强版) ---
 def check_topic_match(new_text, existing_pages):
     if not existing_pages: return {"match": False}
     titles_str = "\n".join([f"ID: {p['id']}, Title: {p['title']}" for p in existing_pages])
@@ -57,23 +59,46 @@ def check_topic_match(new_text, existing_pages):
     return safe_json_parse(res, "Topic Match") or {"match": False}
 
 def generate_spanish_content(text):
-    print("🚀 启动 DeepSeek-R1 进行语言分析...")
+    """
+    [R1 升级版] 智能结构化西语笔记
+    不仅仅提取单词，而是根据内容类型（语法/阅读/词汇）进行深度整理。
+    """
+    print("🚀 启动 DeepSeek-R1 进行深度语言分析...")
     prompt = f"""
-    You are a Spanish expert. Process this content: {text[:15000]}
+    You are a professional Spanish teacher. 
+    Analyze and restructure the following content into a high-quality study note.
     
-    The content might be a complex article.
-    1. Summarize it in Chinese.
-    2. Extract key Spanish vocabulary/expressions (even if it's advanced).
-    3. Extract 2-3 key sentences (quotes).
+    Input Content:
+    {text[:15000]}
     
-    Output JSON (No Markdown):
+    **Task**:
+    1. Identify the core topic (Grammar rule, Vocabulary list, Cultural insight, or Reading comprehension).
+    2. Create a structured output suitable for a Notion page.
+    3. **Smart Formatting**: 
+       - If it's a comparison (e.g., Ser vs Estar), MUST create a **Table**.
+       - If it's a grammar rule, use **Heading** for the rule and **List** for examples.
+       - If it's a text/video, extract **Core Vocabulary** (Table) and **Key Sentences** (List).
+    
+    **Output JSON Format (Strictly No Markdown)**:
     {{
-        "title": "Article Title", 
-        "category": "Reading", 
-        "summary": "Summary",
+        "title": "Clear and Descriptive Title", 
+        "category": "Grammar/Vocabulary/Reading/Culture", 
+        "summary": "Concise Chinese summary of the content.",
         "blocks": [
-            {{ "type": "heading", "content": "1. Core Expressions" }},
-            {{ "type": "table", "content": {{ "headers": ["Spanish","Chinese","Context"], "rows": [["Word","Meaning","Context"]] }} }}
+            {{ "type": "heading", "content": "1. Core Concept / Main Topic" }},
+            {{ "type": "text", "content": "Detailed explanation of the grammar rule or context..." }},
+            {{ 
+                "type": "table", 
+                "content": {{
+                    "headers": ["Spanish", "Chinese", "Example/Notes"],
+                    "rows": [
+                        ["Concept A", "Meaning A", "Ex 1"],
+                        ["Concept B", "Meaning B", "Ex 2"]
+                    ]
+                }}
+            }},
+            {{ "type": "heading", "content": "2. Key Examples / Conjugations" }},
+            {{ "type": "list", "content": ["Example sentence 1", "Example sentence 2"] }}
         ]
     }}
     """
@@ -95,7 +120,7 @@ def process_general_knowledge(text):
     Research Assistant. Analyze: {text[:15000]} 
     Output strictly JSON:
     {{
-        "title": "Chinese Title", "summary": "Chinese Summary", "tags": ["Tag1"], "key_points": ["Point 1..."]
+        "title": "Chinese Title", "summary": "Detailed Chinese Summary", "tags": ["Tag1"], "key_points": ["Point 1..."]
     }}
     """
     content, reasoning = get_reasoning_completion(prompt)
@@ -126,7 +151,7 @@ def main_workflow(user_input=None, uploaded_file=None):
     # 2. 路由
     print("🚦 Routing...")
     intent = classify_intent(processed_text)
-    content_type = intent.get('type', 'General')
+    content_type = intent.get('type', 'Humanities')
     print(f"👉 Type: {content_type}")
 
     current_page_id = None 
@@ -139,7 +164,7 @@ def main_workflow(user_input=None, uploaded_file=None):
         
         if match.get('match'):
             page_id = match.get('page_id')
-            current_page_id = page_id # ✅ 记录 ID
+            current_page_id = page_id
             print(f"💡 Merging into: {match.get('page_title')}")
             
             structure, tables = notion_ops.get_page_structure(page_id)
@@ -157,12 +182,22 @@ def main_workflow(user_input=None, uploaded_file=None):
             print("🆕 Creating New Spanish Note...")
             data = generate_spanish_content(processed_text)
             if data:
-                # ✅ 这里接收返回值 ID
+                # create_study_note 现在支持复杂的 blocks 列表，而不仅仅是单词表
                 current_page_id = notion_ops.create_study_note(data.get('title'), data.get('category', 'General'), data.get('summary'), data.get('blocks'), original_url)
 
     else:
-        print("🌍 General Knowledge Mode...")
-        existing_titles = notion_ops.get_all_page_titles(notion_ops.DB_GENERAL_ID)
+        # 通用模式 (Tech / Humanities)
+        if content_type == 'Tech':
+            print("💻 Tech Mode Activated...")
+            target_db_id = notion_ops.DB_TECH_ID
+        else:
+            print("🌍 Humanities Mode Activated...")
+            target_db_id = notion_ops.DB_HUMANITIES_ID
+        
+        if not target_db_id:
+            raise Exception(f"❌ Error: Database ID for {content_type} is not configured.")
+
+        existing_titles = notion_ops.get_all_page_titles(target_db_id)
         match = check_topic_match(processed_text, existing_titles)
         
         print("🧠 Generating notes (R1)...")
@@ -172,45 +207,13 @@ def main_workflow(user_input=None, uploaded_file=None):
 
         if match.get('match'):
             page_id = match.get('page_id')
-            current_page_id = page_id # ✅ 记录 ID
+            current_page_id = page_id
             print(f"💡 Merging into: {match.get('page_title')}")
             notion_ops.append_to_page(page_id, data.get('summary'), data.get('key_points'))
         else:
-            print("🆕 Creating General Note...")
-            # ✅ 这里接收返回值 ID
-            current_page_id = notion_ops.create_general_note(data, original_url)
+            print(f"🆕 Creating New {content_type} Note...")
+            current_page_id = notion_ops.create_general_note(data, target_db_id, original_url)
 
-    # === 🎙️ 4. 播客生成 (按需开启) ===
-    audio_file = None
-    
-    # 🌟 核心判断逻辑：
-    # 1. 必须有写入成功的页面 (current_page_id)
-    # 2. 必须是西语模式 (content_type == 'Spanish')
-    # 3. 必须不是 PDF (not uploaded_file)
-    # 4. 必须不是 URL (not original_url)
-    should_generate_podcast = (
-        current_page_id 
-        and content_type == 'Spanish' 
-        and not uploaded_file 
-        and not original_url
-    )
-
-    if should_generate_podcast:
-        print("🎙️ Generating Podcast for Spanish text...")
-        # 传入原始文本
-        script, audio_file = podcast_ops.run_podcast_workflow(processed_text)
-        
-        if script:
-            # 追加到 Notion
-            notion_ops.append_podcast_script(current_page_id, script)
-    else:
-        if content_type == 'Spanish':
-            if uploaded_file or original_url:
-                print("🔇 Skipping podcast (File/URL input)")
-            elif not current_page_id:
-                print("🔇 Skipping podcast (Notion write failed)")
-        else:
-            print("🔇 Skipping podcast (Not Spanish content)")
-    
+    # 4. 结束 
     print("✅ Processing Complete!")
-    return audio_file
+    return True
