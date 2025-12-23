@@ -75,14 +75,23 @@ graph TD
 
 📦 notion-ai-agent
  ┣ 📜 app.py             # 🎨 前端入口：处理 Streamlit 状态与 HITL 交互
+ 
  ┣ 📜 graph_agent.py     # 🕸️ 核心架构：定义 State, Nodes, Edges 和 Workflow 图
+ 
  ┣ 📜 agents.py          # 🧠 业务逻辑：封装 Researcher 和 Editor 的具体能力
+ 
  ┣ 📜 notion_ops.py      # ✍️ 执行工具：处理 Notion Block 组装与 API 交互
+ 
  ┣ 📜 vector_ops.py      # 💾 记忆工具：ChromaDB 向量检索
+ 
  ┣ 📜 web_ops.py         # 🌐 网络工具：视频/网页抓取
+ 
  ┣ 📜 file_ops.py        # 📄 文件工具：PDF 解析
+ 
  ┣ 📜 llm_client.py      # 🤖 模型接口：封装 DeepSeek API
+ 
  ┣ 📜 requirements.txt   # 📦 依赖清单
+ 
  ┗ 📜 README.md          # 📄 项目文档
 
 
@@ -91,17 +100,24 @@ graph TD
 1. 环境配置
 
 git clone [https://github.com/your-username/notion-ai-agent.git](https://github.com/your-username/notion-ai-agent.git)
+
 cd notion-ai-agent
+
 pip install -r requirements.txt
 
 
 2. 填写密钥 (.env)
 
 OPENAI_API_KEY="sk-..."
+
 OPENAI_BASE_URL="[https://api.deepseek.com](https://api.deepseek.com)"
+
 NOTION_TOKEN="secret_..."
+
 NOTION_DATABASE_ID="..."          # 西语库
+
 NOTION_DATABASE_ID_TECH="..."     # 科技库
+
 NOTION_DATABASE_ID_HUMANITIES="..." # 社科库
 
 
