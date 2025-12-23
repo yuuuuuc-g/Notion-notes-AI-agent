@@ -69,9 +69,15 @@ def clear_inputs():
 #  Sidebar
 # ===========================
 with st.sidebar:
-    st.markdown("## 🧠 Agent V3 (LangGraph)")
-    st.info(f"Session ID: {st.session_state['thread_id'][:8]}...")
-    st.divider()
+    # 标题
+    st.markdown("""
+        <h1 style='text-align: left; color: #333; font-size: 20px; font-family: sans-serif; font-weight: 800; margin-bottom: 5px;'>
+            <span style='font-size: 24px;'>💠</span> Second Brain Pipeline
+        </h1>
+        <p style='font-size: 12px; color: #666; margin-bottom: 20px;'>
+            Your Personal AI Second Brain
+        </p>
+        """, unsafe_allow_html=True)
 
     col1, col2 = st.columns([3, 1])
     with col1: st.header("📥 Input")
@@ -89,6 +95,18 @@ with st.sidebar:
 # ===========================
 #  Main Interface
 # ===========================
+if not submit_btn:
+    # 默认主图
+    if os.path.exists("banner.jpg"):
+        st.image("banner.jpg", use_container_width=True) 
+    else:
+        st.image(
+            "https://cdn.pixabay.com/photo/2018/03/19/18/20/tea-time-3240766_1280.jpg",
+            caption="“Knowledge is a universe waiting to be explored.”",
+            use_container_width=True
+        )
+    
+    st.info("👈 **Start here**: Upload a file or paste content in the sidebar.")
 
 # 配置 LangGraph 的运行参数
 config = {"configurable": {"thread_id": st.session_state["thread_id"]}}
