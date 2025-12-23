@@ -1,5 +1,5 @@
 💠 AI Knowledge Agent (Personal Knowledge Pipeline)<div align="center">
-<h3> <h3> 🚀 下一代具备“自我纠错”能力的知识管理智能体 </h3>
+<h3> <h3> 🚀 具备“自我纠错”能力的知识管理智能体 </h3>
 
 <p>
 <b>循环图架构</b> • <b>人机回环 (HITL)</b> • <b>向量记忆</b> • <b>多模态感知</b>
