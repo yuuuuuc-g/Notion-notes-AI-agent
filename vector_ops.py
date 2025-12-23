@@ -6,13 +6,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # --- 配置 ---
-# 我们使用 OpenAI 的 text-embedding-3-small (便宜且强大)
-# 如果你只用 DeepSeek，DeepSeek 并没有官方兼容 OpenAI 格式的 Embedding API (截至目前)
-# 所以这里建议单独配一个 OpenAI Key，或者使用本地模型 (SentenceTransformer)
-# 为了演示最简便的方法，我们假设你有一个能调用的 Embedding 服务
-# 如果没有 OpenAI Key，可以使用 chromadb 自带的 default_embedding_function (下载本地模型，免费)
-
-# 这里我们使用 Chroma 默认的 SentenceTransformer (完全免费，本地运行，不用 API Key)
+# 这里使用 Chroma 默认的 SentenceTransformer (完全免费，本地运行，不用 API Key)
 # 第一次运行会自动下载模型 (约 80MB)
 EMBEDDING_FUNC = embedding_functions.SentenceTransformerEmbeddingFunction(
     model_name="all-MiniLM-L6-v2"

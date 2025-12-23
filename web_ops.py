@@ -40,7 +40,7 @@ def fetch_youtube_content(url):
             subtitles = info.get('subtitles', {})
             auto_captions = info.get('automatic_captions', {})
             
-            # 定义我们想要的语言优先级
+            # 定义语言优先级
             langs = ['es', 'en', 'zh-Hans', 'zh-Hant']
             
             target_url = None
