@@ -21,16 +21,58 @@ collection = client.get_or_create_collection(
     embedding_function=EMBEDDING_FUNC
 )
 
-def add_memory(page_id, text_content, title, category):
+def add_memory(
+    page_id,
+    text_content=None,
+    title=None,
+    category=None,
+    *,
+    content=None,
+    intent_type=None,
+    metadata: dict | None = None,
+):
     """
-    存入记忆：将笔记内容向量化并存入 Chroma
+    存入记忆（工业级 V2）
+
+    兼容两种调用方式：
+
+    1️⃣ 旧版（positional）:
+        add_memory(page_id, text, title, category)
+
+    2️⃣ 新版（keyword）:
+        add_memory(
+            page_id=...,
+            content=...,
+            title=...,
+            intent_type=...,
+            metadata={...}
+        )
     """
-    print(f"💾 Vectorizing memory: {title}...")
+
+    # ---------- 参数归一化 ----------
+    final_content = content if content is not None else text_content
+    final_title = title or (metadata.get("title") if metadata else "Untitled")
+    final_category = (
+        intent_type
+        or category
+        or (metadata.get("category") if metadata else "General")
+    )
+
+    if not final_content:
+        print("❌ VectorOps: content is empty, skip memory.")
+        return False
+
+    final_metadata = metadata or {}
+    final_metadata.setdefault("title", final_title)
+    final_metadata.setdefault("category", final_category)
+
+    print(f"💾 Vectorizing memory: {final_title}...")
+
     try:
         collection.add(
-            documents=[text_content],       # 原始内容 (用于计算向量)
-            metadatas=[{"title": title, "category": category}], # 元数据
-            ids=[page_id]                   # 使用 Notion Page ID 作为唯一标识
+            documents=[final_content],
+            metadatas=[final_metadata],
+            ids=[page_id],
         )
         print("✅ Memory stored in Vector DB.")
         return True
@@ -64,8 +106,9 @@ def search_memory(query_text, n_results=1):
                 return {
                     "match": True,
                     "page_id": page_id,
-                    "title": metadata['title'],
-                    "distance": distance
+                    "title": metadata.get("title"),
+                    "distance": distance,
+                    "metadata": metadata,   # 👈 新增（向后兼容）
                 }
             else:
                 print("   No close match found (Distance too high).")
