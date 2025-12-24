@@ -211,22 +211,15 @@ def node_validator(state: AgentState) -> AgentState:
         }
 
 def node_human_review(state: AgentState) -> AgentState:
-    """
-    Human Review Node
-    - human_decision:
-        - approve   → 直接发布
-        - reroute   → 人工指定新的 notion_database_id
-        - edit      → 内容已被人工编辑（draft 已变）
-    """
-    print("🟠 [Graph] Human Review: Waiting for human decision...")
+    print("🟠 [Graph] Human Review: Processing human decision...")
 
-    decision = state.get("human_decision", "approve")
+    override_db = state.get("override_database_id")
 
-    if decision == "reroute":
-        override_db = state.get("override_database_id")
-        if override_db:
-            print(f"🧠 [Human] Override database_id -> {override_db}")
-            return {"override_database_id": override_db}
+    if override_db:
+        print(f"🧠 [Human] Final database override -> {override_db}")
+        return {
+            "notion_database_id": override_db
+        }
 
     return {}
 
