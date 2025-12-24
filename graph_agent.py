@@ -1,31 +1,32 @@
-import operator
-from typing import Annotated, TypedDict, Union, List, Dict, Any
+
+from typing import  TypedDict, Dict, Any
 from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.memory import MemorySaver # 🌟 关键：内存检查点
+from enum import Enum
+
+class KnowledgeDomain(str, Enum):
+    SPANISH = "spanish_learning"
+    TECH = "tech_knowledge"
+    HUMANITIES = "humanities"
 
 # ==========================================
 # Knowledge Domain Routing
 # ==========================================
 
-DOMAIN_SPANISH = "spanish_learning"
-DOMAIN_TECH = "tech_knowledge"
-DOMAIN_HUMANITIES = "humanities_social_science"
-DOMAIN_GENERAL = "general"
-
 INTENT_TO_DOMAIN = {
-    "SpanishLearning": DOMAIN_SPANISH,
-    "Spanish": DOMAIN_SPANISH,
-    "Language": DOMAIN_SPANISH,
+    "SpanishLearning": KnowledgeDomain.SPANISH,
+    "Spanish": KnowledgeDomain.SPANISH,
+    "Language": KnowledgeDomain.SPANISH,
 
-    "Tech": DOMAIN_TECH,
-    "Technology": DOMAIN_TECH,
-    "AI": DOMAIN_TECH,
-    "Science": DOMAIN_TECH,
+    "Tech": KnowledgeDomain.TECH,
+    "Technology": KnowledgeDomain.TECH,
+    "AI": KnowledgeDomain.TECH,
+    "Science": KnowledgeDomain.TECH,
 
-    "Humanities": DOMAIN_HUMANITIES,
-    "SocialScience": DOMAIN_HUMANITIES,
-    "History": DOMAIN_HUMANITIES,
-    "Philosophy": DOMAIN_HUMANITIES,
+    "Humanities": KnowledgeDomain.HUMANITIES,
+    "SocialScience": KnowledgeDomain.HUMANITIES,
+    "History": KnowledgeDomain.HUMANITIES,
+    "Philosophy": KnowledgeDomain.HUMANITIES,
 }
 
 # 导入业务逻辑
@@ -37,20 +38,33 @@ editor = EditorAgent()
 
 def default_state() -> dict:
     return {
+        # 输入
         "user_input": "",
         "uploaded_file": None,
+
+        # 中间变量
         "raw_text": "",
         "original_url": "",
         "intent_type": "",
+        "knowledge_domain": None,   # 👈 与 AgentState 对齐（KnowledgeDomain | None）
         "memory_match": {},
+
+        # 核心产物
         "draft": {},
+
+        # 控制流
         "retry_count": 0,
         "error_message": "",
         "final_output": "",
+
+        # Human-in-the-loop
         "human_feedback": "",
         "review_status": "pending",
         "human_decision": "",
         "override_database_id": "",
+
+        # 发布相关（显式建模，避免隐式 get）
+        "notion_database_id": None,
     }
 
 # ==========================================
@@ -65,7 +79,7 @@ class AgentState(TypedDict):
     raw_text: str
     original_url: str
     intent_type: str
-    knowledge_domain: str
+    knowledge_domain: KnowledgeDomain
     memory_match: Dict
     
     # 核心产物
@@ -114,24 +128,25 @@ def node_classifier(state: AgentState) -> AgentState:
 
 def node_domain_router(state: AgentState) -> AgentState:
     """
-    根据 intent_type 映射到具体知识库 / 向量库领域
+    根据 intent_type 映射到具体知识领域（KnowledgeDomain）
     """
     intent = state.get("intent_type", "")
-    domain = INTENT_TO_DOMAIN.get(intent, DOMAIN_GENERAL)
+    domain = INTENT_TO_DOMAIN.get(intent, KnowledgeDomain.TECH)
 
-    print(f"🧭 [Graph] Domain Router: intent='{intent}' -> domain='{domain}'")
+    print(f"🧭 [Graph] Domain Router: intent='{intent}' -> domain='{domain.value}'")
     return {"knowledge_domain": domain}
 
 def node_memory(state: AgentState) -> AgentState:
     """记忆：单一向量库 + domain 作为 metadata"""
-    domain = state.get("knowledge_domain", DOMAIN_GENERAL)
-    print(f"🔵 [Graph] Memory: Searching vector DB (domain={domain})...")
+    domain: KnowledgeDomain = state.get("knowledge_domain", KnowledgeDomain.TECH)
+    domain_value = domain.value
+    print(f"🔵 [Graph] Memory: Searching vector DB (domain={domain_value})...")
 
     try:
         # 新版接口：支持 domain 作为过滤条件
         match = researcher.consult_memory(
             query=state["raw_text"],
-            domain=domain
+            domain=domain_value
         )
     except TypeError:
         # 旧版接口：不支持 domain，Graph 仍然保留语义信息
@@ -140,7 +155,7 @@ def node_memory(state: AgentState) -> AgentState:
 
     # 🌱 关键：把 domain 作为 metadata 注入 memory_match
     if isinstance(match, dict):
-        match["domain"] = domain
+        match["domain"] = domain_value
 
     return {"memory_match": match}
 
@@ -211,7 +226,7 @@ def node_human_review(state: AgentState) -> AgentState:
         override_db = state.get("override_database_id")
         if override_db:
             print(f"🧠 [Human] Override database_id -> {override_db}")
-            return {"notion_database_id": override_db}
+            return {"override_database_id": override_db}
 
     return {}
 
@@ -228,7 +243,7 @@ def node_publisher(state: AgentState) -> AgentState:
             raw_text=state['raw_text'],
             original_url=state['original_url'],
             database_id=state.get("notion_database_id"),
-            domain=state.get("knowledge_domain")  # 👈 新增（向后兼容）
+            domain=state.get("knowledge_domain").value if state.get("knowledge_domain") else None  # 👈 新增（向后兼容）
         )
     except TypeError:
         # 旧版接口：不支持 database_id
