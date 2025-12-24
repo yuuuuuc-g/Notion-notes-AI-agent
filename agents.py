@@ -125,53 +125,111 @@ class EditorAgent:
         """
         return safe_json_parse(get_completion(prompt), "Merge Decision") or {"action": "append_text"}
 
-    def publish(self, draft, intent_type, memory_match, raw_text, original_url=None, database_id=None):
+    def publish(
+        self,
+        draft,
+        intent_type,
+        memory_match,
+        raw_text,
+        original_url=None,
+        database_id=None,
+        domain=None,
+    ):
+        """
+        Industrial-grade publish logic.
+
+        Authority order:
+        1. Graph (database_id / domain)
+        2. Human override
+        3. Memory (only if same database)
+        4. Intent fallback (legacy)
+        """
+
+        # --------------------------------------------------
+        # 0. 基础校验
+        # --------------------------------------------------
         if not draft:
             print("❌ Editor: Draft is empty.")
             return False
 
-        page_title = draft.get('title', 'Untitled')
+        page_title = draft.get("title", "Untitled")
+        blocks = draft.get("blocks") or draft.get("key_points", [])
         page_id = None
-        blocks = draft.get('blocks') or draft.get('key_points', [])
 
-        if memory_match.get('match'):
-            existing_id = memory_match['page_id']
-            print(f"💡 Editor: Merging into: 《{memory_match['title']}》")
-            
-            if intent_type == 'Spanish':
-                strategy = self.decide_merge(raw_text, existing_id)
-                if strategy.get('action') == 'insert_row':
-                    success = notion_ops.add_row_to_table(strategy['table_id'], strategy['row_data'])
-                    if success: return True 
-            
-            success = notion_ops.append_to_page(existing_id, draft.get('summary'), blocks)
-            if success: page_id = existing_id
+        # --------------------------------------------------
+        # 1. 决定目标数据库（唯一权威）
+        # --------------------------------------------------
+        if database_id:
+            target_database = database_id
+            print(f"📦 Editor: Target database decided by Graph → {target_database}")
+        else:
+            if intent_type == "Spanish":
+                target_database = notion_ops.DB_SPANISH_ID
+            elif intent_type == "Tech":
+                target_database = notion_ops.DB_TECH_ID
             else:
-                print("⚠️ Merge failed. Switching to CREATE mode...")
+                target_database = notion_ops.DB_HUMANITIES_ID
 
-        if not page_id:
-            print(f"🆕 Editor: Publishing new: 《{page_title}》")
-            if intent_type == 'Spanish':
-                page_id = notion_ops.create_study_note(
-                    draft.get('title'),
-                    draft.get('category', 'General'),
-                    draft.get('summary'),
-                    blocks,
-                    original_url
+            print(f"📦 Editor: Target database fallback by intent → {target_database}")
+
+        # --------------------------------------------------
+        # 2. Memory Merge Gate
+        # --------------------------------------------------
+        can_merge = False
+        existing_page_id = None
+
+        if memory_match and memory_match.get("match"):
+            mem_db = memory_match.get("database_id")
+            existing_page_id = memory_match.get("page_id")
+
+            if mem_db == target_database:
+                can_merge = True
+                print(f"💡 Editor: Memory match accepted → {existing_page_id}")
+            else:
+                print(
+                    "⚠️ Editor: Memory match rejected (different database)\n"
+                    f"    memory_db={mem_db}, target_db={target_database}"
                 )
-            else:
-                # 🎯 V2 核心：优先使用 Graph 传入的 database_id
-                if database_id:
-                    target_db = database_id
-                    print(f"📦 Editor: Using database_id from Graph: {target_db}")
-                else:
-                    target_db = notion_ops.DB_TECH_ID if intent_type == 'Tech' else notion_ops.DB_HUMANITIES_ID
-                    print(f"📦 Editor: Fallback database by intent: {target_db}")
 
-                page_id = notion_ops.create_general_note(draft, target_db, original_url)
+        # --------------------------------------------------
+        # 3. Merge
+        # --------------------------------------------------
+        if can_merge and existing_page_id:
+            success = notion_ops.append_to_page(
+                existing_page_id,
+                draft.get("summary"),
+                blocks,
+            )
+            if success:
+                page_id = existing_page_id
 
+        # --------------------------------------------------
+        # 4. Create new page
+        # --------------------------------------------------
+        if not page_id:
+            print(f"🆕 Editor: Creating new page → {page_title}")
+            page_id = notion_ops.create_general_note(
+                draft,
+                target_database,
+                original_url,
+            )
+
+        # --------------------------------------------------
+        # 5. Archive memory
+        # --------------------------------------------------
         if page_id:
             print("🧠 Editor: Archiving to Vector Memory...")
-            vector_ops.add_memory(page_id, raw_text[:2000], page_title, intent_type)
+            vector_ops.add_memory(
+                page_id=page_id,
+                content=raw_text[:2000],
+                title=page_title,
+                intent_type=intent_type,
+                metadata={
+                    "database_id": target_database,
+                    "domain": domain,
+                },
+            )
             return True
+
+        print("❌ Editor: Publish failed.")
         return False
