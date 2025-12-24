@@ -1,3 +1,4 @@
+
 💠 AI Knowledge Agent (LangGraph Edition)
 
 📖 项目简介 (Introduction)
@@ -102,12 +103,9 @@ graph TD
 🚀 快速开始 (Quick Start)
 1. 环境配置
 git clone [https://github.com/your-username/notion-ai-agent.git](https://github.com/your-username/notion-ai-agent.git)
-cd notion-ai-agent
-pip install -r requirements.txt
 
 2. 填写密钥 (.env)OPENAI_API_KEY="sk-..."
-OPENAI_BASE_URL="[https://api.deepseek.com](https://api.deepseek.com)"
-NOTION_TOKEN="secret_..."
+
 NOTION_DATABASE_ID="..."          # 西语库
 NOTION_DATABASE_ID_TECH="..."     # 科技库
 NOTION_DATABASE_ID_HUMANITIES="..." # 社科库
