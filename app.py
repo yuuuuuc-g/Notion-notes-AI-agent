@@ -12,7 +12,7 @@ import uuid
 from io import StringIO
 
 # 导入 LangGraph 构建好的图
-from graph_agent import app_graph
+from graph_agent import app_graph, KnowledgeDomain
 
 # --- Page Configuration ---
 st.set_page_config(
@@ -158,6 +158,13 @@ if st.session_state["graph_state"] == "PAUSED":
         new_title = st.text_input("Title", value=current_draft.get("title", ""))
         new_summary = st.text_area("Summary", value=current_draft.get("summary", ""), height=100)
         
+        # 加入数据库选择下拉框
+        selected_domain = st.selectbox(
+            "📚 Choose target database",
+            options=list(KnowledgeDomain),
+            format_func=lambda x: x.name.title()
+        )
+        
         # 显示详细的 JSON 结构 (只读，因为太复杂)
         with st.expander("View Full JSON Blocks"):
             st.json(current_draft)
@@ -166,12 +173,16 @@ if st.session_state["graph_state"] == "PAUSED":
         
         # --- 批准按钮 ---
         if col_Approve.button("✅ Approve & Publish", type="primary", use_container_width=True):
-            # 更新 State 中的 draft
+            # 更新 State 中的 draft 和知识域
             current_draft["title"] = new_title
             current_draft["summary"] = new_summary
             
-            # 更新图的状态
-            app_graph.update_state(config, {"draft": current_draft})
+            # 更新图的状态，写入知识域和覆盖数据库ID（None）
+            app_graph.update_state(config, {
+                "draft": current_draft,
+                "knowledge_domain": selected_domain,
+                "override_database_id": None  # 可扩展：未来允许直接选 DB
+            })
             
             # 继续运行 (Resume)
             with st.status("🚀 Publishing to Notion...", expanded=True) as status:

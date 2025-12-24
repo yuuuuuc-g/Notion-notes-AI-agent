@@ -125,7 +125,7 @@ class EditorAgent:
         """
         return safe_json_parse(get_completion(prompt), "Merge Decision") or {"action": "append_text"}
 
-    def publish(self, draft, intent_type, memory_match, raw_text, original_url=None):
+    def publish(self, draft, intent_type, memory_match, raw_text, original_url=None, database_id=None):
         if not draft:
             print("❌ Editor: Draft is empty.")
             return False
@@ -152,9 +152,22 @@ class EditorAgent:
         if not page_id:
             print(f"🆕 Editor: Publishing new: 《{page_title}》")
             if intent_type == 'Spanish':
-                page_id = notion_ops.create_study_note(draft.get('title'), draft.get('category', 'General'), draft.get('summary'), blocks, original_url)
+                page_id = notion_ops.create_study_note(
+                    draft.get('title'),
+                    draft.get('category', 'General'),
+                    draft.get('summary'),
+                    blocks,
+                    original_url
+                )
             else:
-                target_db = notion_ops.DB_TECH_ID if intent_type == 'Tech' else notion_ops.DB_HUMANITIES_ID
+                # 🎯 V2 核心：优先使用 Graph 传入的 database_id
+                if database_id:
+                    target_db = database_id
+                    print(f"📦 Editor: Using database_id from Graph: {target_db}")
+                else:
+                    target_db = notion_ops.DB_TECH_ID if intent_type == 'Tech' else notion_ops.DB_HUMANITIES_ID
+                    print(f"📦 Editor: Fallback database by intent: {target_db}")
+
                 page_id = notion_ops.create_general_note(draft, target_db, original_url)
 
         if page_id:

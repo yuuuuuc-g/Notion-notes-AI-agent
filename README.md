@@ -1,44 +1,115 @@
-💠 AI Knowledge Agent (Personal Knowledge Pipeline)<div align="center"><h3> 🚀 你的第二大脑自动化构建流水线 </h3><p><b>多智能体协作</b> • <b>向量语义检索</b> • <b>多模态输入</b> • <b>结构化归档</b></p>点击体验在线 Demo | 查看详细文档 | 报告 Bug</div>📖 项目简介 (Introduction)Knowledge AI Agent 是一个全栈 AI 知识管理系统。它不再是一个简单的聊天机器人，而是一个不知疲倦的智能编辑团队。它能处理 PDF 文档、YouTube 视频、网页链接 或 纯文本，利用 DeepSeek-R1 进行深度思考与重构，最终将结构化的知识自动存入你的 Notion 知识库。它解决了“收藏从未阅读”的痛点，实现了从信息获取到知识沉淀的全自动化。✨ 核心亮点 (Key Features)功能模块亮点描述🤖 双智能体架构Researcher 负责感知与深度思考，Editor 负责决策与排版，分工明确，逻辑解耦。🧠 向量长期记忆内置 ChromaDB，对每一条笔记进行向量化存储。新笔记录入时自动进行语义查重，避免重复，支持增量合并。🇪🇸 深度西语模式专为语言学习者设计。自动提取核心词汇表、例句，并将枯燥的语法点重构为清晰的对比表格。🌍 通用知识图谱支持 Tech (科技) 与 Humanities (社科) 自动分类。对于长文，自动生成 Key Points 和 深度摘要。🛡️ 工程级鲁棒性实现了底层 httpx 通道绕过 SDK 限制；内置数据清洗器；解决了 Streamlit 状态管理痛点。🏗️ 系统架构 (Architecture)本项目采用了 Orchestrator-Workers (指挥官-工人) 模式，数据流向清晰可控：graph TD
-    User((用户输入)) -->|PDF / URL / Text| UI[Streamlit 前端]
-    UI -->|触发| Main{Main Orchestrator}
-    
-    subgraph "🕵️‍♂️ Researcher Agent (感知与思考)"
-        Main -->|1. 感知| WebOps[Web/PDF 解析器]
-        Main -->|2. 分类| Router[意图识别器]
-        Main -->|3. 回忆| VectorDB[(ChromaDB 向量库)]
-        Main -->|4. 起草| Reasoning[DeepSeek-R1 推理]
+💠 AI Knowledge Agent (LangGraph Edition)
+
+📖 项目简介 (Introduction)
+AI Knowledge Agent 是一个基于 LangGraph 架构构建的智能知识流水线，它是一个有状态的图系统 (Stateful Graph System)。
+它具备反思与纠错能力：如果 AI 生成的笔记格式不达标，系统会自动打回重写，直到满足要求。
+同时引入了 Human-in-the-loop (人机回环) 机制，让用户在最终写入 Notion 前拥有“上帝视角”的审核权。
+✨ 核心亮点 (Key Features)
+| 特性模块 | 技术深度描述 
+|| 🔄 自我纠错循环 | 引入 Validator 节点。如果 LLM 生成的 JSON 格式错误或缺失关键字段，系统会自动回滚到 Researcher 节点并附带错误日志，强制 AI 重试 (Retry)，直到通过验证。 
+|| ✋ 人机回环 (HITL) | 利用 LangGraph 的 interrupt_before 机制，在写入数据库前暂停运行。用户可以在 UI 上预览、修改 AI 生成的草稿，点击批准后系统才会继续执行。 
+|| 🧠 动态向量记忆 | 内置 ChromaDB。每次处理新内容前，先进行语义检索。如果发现相似主题，自动触发“融合策略 (Merge)”而非新建，实现知识的有机生长。 
+|| 🇪🇸 智能重构引擎 | 针对西语学习场景，通过 DeepSeek-R1 进行深度推理，将非结构化文本重构为 Notion 的 Table (对比表)、Heading (层级) 和 List (知识点)。 
+|| 🌍 多模态感知 | 集成 yt-dlp 和 PyMuPDF，支持 YouTube 视频字幕提取、PDF 论文解析、网页抓取 以及 纯文本 输入。 
+|| 🧭 语义驱动的数据流 | 先进行语义归类（KnowledgeDomain），再由 Graph 决定写入目标数据库，实现“语义 → 数据去向”的集中式决策，避免规则分散与隐式耦合。 
+|🏗️ 系统架构 (System Architecture)
+
+```mermaid
+graph TD
+    Start([Start])
+
+    %% ===== Input Layer =====
+    Start --> Perceiver
+
+    subgraph "🕵️‍♂️ Researcher Agent（感知 & 生成）"
+        Perceiver[Perceiver<br/>多模态感知<br/>(Text / PDF / URL / Video)]
+        Classifier[Classifier<br/>意图识别]
+        DomainRouter[Domain Router<br/>语义归类<br/>(KnowledgeDomain)]
+        Memory[Memory Node<br/>向量检索<br/>(Single Vector DB + Domain Metadata)]
+        Researcher[Researcher<br/>内容生成 / 重写<br/>(LLM)]
     end
-    
-    subgraph "✍️ Editor Agent (决策与执行)"
-        Main -->|5. 移交| Editor
-        Editor -->|检查结构| NotionRead[读取页面结构]
-        Editor -->|决策: 合并or新建| Strategy{合并策略}
-        Strategy -->|插入表格行| NotionWrite[Notion API]
-        Strategy -->|追加文本块| NotionWrite
+
+    Perceiver --> Classifier
+    Classifier --> DomainRouter
+    DomainRouter --> Memory
+    Memory --> Researcher
+
+    %% ===== Validation & Retry =====
+    Researcher --> Validator{Validator<br/>Schema 校验}
+
+    subgraph "🔁 Self-Correction Loop"
+        Validator -- "❌ 校验失败" --> Researcher
     end
-    
-    Editor -->|6. 归档记忆| VectorDB
-    NotionWrite -->|7. 最终产出| Notion[(Notion Database)]
+
+    %% ===== Human-in-the-loop =====
+    Validator -- "✅ 校验通过" --> HumanReview
+
+    subgraph "✋ Human-in-the-loop"
+        HumanReview[Human Review<br/>人工审核 / 编辑<br/>可覆盖 KnowledgeDomain]
+    end
+
+    %% ===== Publish Layer =====
+    subgraph "✍️ Editor Agent（执行层）"
+        Publisher[Publisher<br/>Notion 写入<br/>(Database by Domain)]
+    end
+
+    HumanReview --> Publisher
+    Publisher --> End([End])
+
+    %% ===== Styles =====
+    style Validator fill:#f96,stroke:#333,stroke-width:2px
+    style HumanReview fill:#69f,stroke:#333,stroke-width:3px
+    style DomainRouter fill:#bbf,stroke:#333,stroke-width:2px
+    style Memory fill:#9f9,stroke:#333,stroke-width:2px
+```
+
+### 🧭 架构设计说明（Architecture Notes）
+
+- **StateGraph = 控制平面（Control Plane）**  
+  Graph 负责“状态流转、语义决策与流程控制”，而非具体业务实现。
+
+- **KnowledgeDomain = 语义层（Semantic Layer）**  
+  系统首先判断“这是什么类型的知识”，再由 Graph 映射到具体的 Notion Database。
+  Database ID 不散落在 Agent 内部，而由 Graph 统一决策。
+
+- **单一向量库 + Domain Metadata**  
+  当前 Memory 仅使用一个向量数据库（ChromaDB），但每条向量均携带 domain 作为 metadata：
+  - 保证跨领域语义连续性
+  - 为未来 domain-aware recall / rerank 预留接口
+  - 避免过早拆分向量库带来的召回质量下降
+
+- **Human-in-the-loop 是治理接口，而非补丁**  
+  人工审核节点不仅用于“Approve / Reject”，
+  还可以在发布前覆盖 KnowledgeDomain，实现对自动决策的最终裁决。
+
+- **Editor Agent 是纯执行单元**  
+  Editor 不再判断写入哪个数据库，只负责：
+  - 接收 Graph 决定的 database_id
+  - 将结构化内容写入 Notion
+
 📂 项目结构 (Directory)📦 notion-ai-agent
- ┣ 📂 .streamlit       # Streamlit 配置
- ┣ 📜 app.py           # 前端入口：处理 UI 交互与状态流
- ┣ 📜 main.py          # 总指挥：协调 Agent 协作
- ┣ 📜 agents.py        # 智能体核心：封装 Researcher 与 Editor 类
- ┣ 📜 notion_ops.py    # 执行层：处理复杂的 Notion Block 组装与 API 交互
- ┣ 📜 vector_ops.py    # 记忆层：ChromaDB 向量检索与存储
- ┣ 📜 web_ops.py       # 网络层：yt-dlp 视频解析与网页抓取
- ┣ 📜 file_ops.py      # 文件层：PDF 文本提取
- ┣ 📜 llm_client.py    # 模型层：DeepSeek API 封装
- ┣ 📜 requirements.txt # 依赖清单
- ┗ 📜 README.md        # 项目文档
-🚀 快速开始 (Quick Start)1. 环境准备确保本地已安装 Python 3.9+。git clone [https://github.com/your-username/notion-ai-agent.git](https://github.com/your-username/notion-ai-agent.git)
+ ┣ 📜 app.py             # 🎨 前端入口：处理 Streamlit 状态与 HITL 交互
+ ┣ 📜 graph_agent.py     # 🕸️ 核心架构：定义 State, Nodes, Edges 和 Workflow 图
+ ┣ 📜 agents.py          # 🧠 业务逻辑：封装 Researcher 和 Editor 的具体能力
+ ┣ 📜 notion_ops.py      # ✍️ 执行工具：处理 Notion Block 组装与 API 交互
+ ┣ 📜 vector_ops.py      # 💾 记忆工具：ChromaDB 向量检索
+ ┣ 📜 web_ops.py         # 🌐 网络工具：视频/网页抓取
+ ┣ 📜 file_ops.py        # 📄 文件工具：PDF 解析
+ ┣ 📜 llm_client.py      # 🤖 模型接口：封装 DeepSeek API
+ ┣ 📜 requirements.txt   # 📦 依赖清单
+ ┗ 📜 README.md          # 📄 项目文档
+
+🚀 快速开始 (Quick Start)
+1. 环境配置
+git clone [https://github.com/your-username/notion-ai-agent.git](https://github.com/your-username/notion-ai-agent.git)
 cd notion-ai-agent
 pip install -r requirements.txt
-2. 配置密钥 (.env)在项目根目录新建 .env 文件，填入你的 API Key：OPENAI_API_KEY="sk-..."
+
+2. 填写密钥 (.env)OPENAI_API_KEY="sk-..."
 OPENAI_BASE_URL="[https://api.deepseek.com](https://api.deepseek.com)"
 NOTION_TOKEN="secret_..."
-NOTION_DATABASE_ID="..."          # 西语库 ID
-NOTION_DATABASE_ID_TECH="..."     # 科技库 ID
-NOTION_DATABASE_ID_HUMANITIES="..." # 社科库 ID
-3. 启动应用
-streamlit run app.py
+NOTION_DATABASE_ID="..."          # 西语库
+NOTION_DATABASE_ID_TECH="..."     # 科技库
+NOTION_DATABASE_ID_HUMANITIES="..." # 社科库
+
+3. 启动应用streamlit run app.py
