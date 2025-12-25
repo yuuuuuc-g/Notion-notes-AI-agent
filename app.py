@@ -7,11 +7,10 @@ except ImportError:
     pass
 
 import streamlit as st
-import json
 import uuid
 from io import StringIO
 
-# 导入 LangGraph 构建好的图
+# 🌟 导入 LangGraph 的图对象和枚举
 from graph_agent import app_graph, KnowledgeDomain
 
 # --- Page Configuration ---
@@ -22,7 +21,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# --- 🎨 CSS Styles ---
+# --- CSS Styles ---
 st.markdown("""
     <style>
     /* 按钮样式优化 */
@@ -51,7 +50,7 @@ st.markdown("""
 
 # --- State Init ---
 if "thread_id" not in st.session_state:
-    st.session_state["thread_id"] = str(uuid.uuid4()) # 每个用户唯一的会话 ID
+    st.session_state["thread_id"] = str(uuid.uuid4()) # 每个任务唯一的会话 ID
 
 if "graph_state" not in st.session_state:
     st.session_state["graph_state"] = "IDLE" # IDLE, RUNNING, PAUSED, COMPLETED
@@ -63,21 +62,19 @@ def clear_inputs():
     st.session_state["input_area"] = ""
     st.session_state["uploader_key_id"] += 1
     st.session_state["graph_state"] = "IDLE"
-    st.session_state["thread_id"] = str(uuid.uuid4()) # 重置会话
+    st.session_state["thread_id"] = str(uuid.uuid4()) # 重置 Session ID
 
 # ===========================
 #  Sidebar
 # ===========================
 with st.sidebar:
-    # 标题
     st.markdown("""
-        <h1 style='text-align: left; color: #333; font-size: 20px; font-family: sans-serif; font-weight: 800; margin-bottom: 5px;'>
+        <h1 style='text-align: left; color: #333; font-size: 20px; font-family: sans-serif; font-weight: 800;'>
             <span style='font-size: 24px;'>💠</span> Second Brain Pipeline
         </h1>
-        <p style='font-size: 12px; color: #666; margin-bottom: 20px;'>
-            Your Personal AI Second Brain
-        </p>
+        <p style='font-size: 12px; color: #666;'>Powered by LangGraph</p>
         """, unsafe_allow_html=True)
+    st.divider()
 
     col1, col2 = st.columns([3, 1])
     with col1: st.header("📥 Input")
@@ -89,8 +86,13 @@ with st.sidebar:
             uploaded_file = st.file_uploader("📎 Upload PDF", type=["pdf"], key=dynamic_key)
             user_input = st.text_area("Or paste text/link:", height=150, key="input_area")
         
-        # 只有在空闲状态才显示开始按钮
-        submit_btn = st.form_submit_button("🚀 Start Workflow", type="primary", use_container_width=True, disabled=(st.session_state["graph_state"] != "IDLE"))
+        # 只有在空闲状态才允许点击开始
+        submit_btn = st.form_submit_button(
+            "🚀 Start Workflow", 
+            type="primary", 
+            use_container_width=True, 
+            disabled=(st.session_state["graph_state"] != "IDLE")
+        )
 
 # ===========================
 #  Main Interface
@@ -107,48 +109,60 @@ if not submit_btn:
         )
     
     st.info("👈 **Start here**: Upload a file or paste content in the sidebar.")
-
-# 配置 LangGraph 的运行参数
+    
+# 配置 LangGraph 的运行参数 (通过 thread_id 记忆上下文)
 config = {"configurable": {"thread_id": st.session_state["thread_id"]}}
 
-# 1. 启动逻辑 (IDLE -> PAUSED)
+# --- 阶段 1: 启动逻辑 (从 IDLE 到 PAUSED) ---
 if submit_btn and st.session_state["graph_state"] == "IDLE":
     if not user_input and not uploaded_file:
         st.warning("⚠️ Please provide input!")
     else:
         st.session_state["graph_state"] = "RUNNING"
+        
         with st.status("🤖 Agent is thinking...", expanded=True) as status:
-            st.write("🔵 Creating perceptions...")
-            # 初始输入
+            st.write("🔵 Initializing Perception...")
+            
+            # 初始状态输入
             initial_state = {
                 "user_input": user_input,
-                "uploaded_file": uploaded_file
+                "uploaded_file": uploaded_file,
+                "retry_count": 0
             }
             
-            # 运行图，直到断点 (human_review)
-            for event in app_graph.stream(initial_state, config, stream_mode="values"):
-                # 实时显示当前的 State keys 变化
-                if "intent_type" in event:
-                    st.write(f"👉 Intent Detected: **{event['intent_type']}**")
-                if "memory_match" in event:
-                    match = event['memory_match']
-                    if match.get('match'):
-                        st.write(f"💡 Found existing note: *{match.get('title')}*")
+            # 运行图！(Stream 模式可以看到每个节点的输出)
+            # 这里的 stream_mode="values" 会返回每个步骤更新后的 state
+            current_step = "Starting"
             
-            # 检查是否停在了 human_review
+            for event in app_graph.stream(initial_state, config, stream_mode="values"):
+                # 根据 state 的变化显示日志
+                if "intent_type" in event:
+                    intent = event['intent_type']
+                    if current_step != intent:
+                        st.write(f"👉 Intent Detected: **{intent}**")
+                        current_step = intent
+                
+                if "memory_match" in event and event['memory_match'].get('match'):
+                    st.write(f"💡 Memory Hit: *{event['memory_match'].get('title')}*")
+
+                if "error_message" in event and event['error_message']:
+                    st.error(f"❌ Validation failed: {event['error_message']} (Retrying...)")
+
+            # 运行结束后，检查是否停在了 'human_review' 断点
             snapshot = app_graph.get_state(config)
             if snapshot.next and snapshot.next[0] == "human_review":
                 status.update(label="🟠 Paused for Human Review", state="running", expanded=False)
                 st.session_state["graph_state"] = "PAUSED"
-                st.rerun() # 刷新页面以显示审核界面
+                st.rerun() # 强制刷新页面，进入审核界面
 
-# 2. 暂停/审核界面 (PAUSED -> COMPLETED)
+# --- 阶段 2: 暂停/审核界面 (从 PAUSED 到 COMPLETED) ---
 if st.session_state["graph_state"] == "PAUSED":
     st.info("✋ **Human-in-the-loop**: The Agent has drafted a note. Please review and approve.")
     
-    # 获取当前的 State 快照
+    # 获取当前的 State 快照 (Memory)
     snapshot = app_graph.get_state(config)
     current_draft = snapshot.values.get("draft", {})
+    current_domain = snapshot.values.get("knowledge_domain", "tech_knowledge")
     
     # --- 编辑区域 ---
     with st.container(border=True):
@@ -158,37 +172,45 @@ if st.session_state["graph_state"] == "PAUSED":
         new_title = st.text_input("Title", value=current_draft.get("title", ""))
         new_summary = st.text_area("Summary", value=current_draft.get("summary", ""), height=100)
         
-        # 加入数据库选择下拉框
-        selected_domain = st.selectbox(
-            "📚 Choose target database",
-            options=list(KnowledgeDomain),
-            format_func=lambda x: x.name.title()
+        # 允许用户手动修正数据库分类
+        # 这里的 options 来自 graph_agent.py 里的 KnowledgeDomain 枚举
+        domain_options = [d.value for d in KnowledgeDomain]
+        try:
+            default_index = domain_options.index(current_domain.value if hasattr(current_domain, 'value') else current_domain)
+        except:
+            default_index = 0
+            
+        selected_db = st.selectbox(
+            "📚 Target Database",
+            options=domain_options,
+            index=default_index,
+            format_func=lambda x: x.replace("_", " ").title()
         )
         
-        # 显示详细的 JSON 结构 (只读，因为太复杂)
-        with st.expander("View Full JSON Blocks"):
+        # 显示详细 JSON (只读)
+        with st.expander("View Full Blocks JSON"):
             st.json(current_draft)
             
         col_Approve, col_Reject = st.columns([1, 1])
         
-        # --- 批准按钮 ---
+        # [A] 批准按钮
         if col_Approve.button("✅ Approve & Publish", type="primary", use_container_width=True):
-            # 更新 State 中的 draft 和知识域
+            # 1. 更新 State (把用户的修改写回内存)
             current_draft["title"] = new_title
             current_draft["summary"] = new_summary
             
-            # 更新图的状态，写入知识域和覆盖数据库ID（None）
+            # 这里不仅更新 draft，还允许更新 knowledge_domain (从而改变写入的数据库)
+            # update_state 会把这些字段 merge 到当前的 state 里
             app_graph.update_state(config, {
                 "draft": current_draft,
-                "knowledge_domain": selected_domain,
-                "override_database_id": None  # 可扩展：未来允许直接选 DB
+                "knowledge_domain": KnowledgeDomain(selected_db)
             })
             
-            # 继续运行 (Resume)
+            # 2. 继续运行 (Resume from 'human_review')
+            # 传入 None 表示不输入新数据，只继续执行后续节点 (publisher)
             with st.status("🚀 Publishing to Notion...", expanded=True) as status:
-                # 传入 None 表示从断点继续
                 for event in app_graph.stream(None, config, stream_mode="values"):
-                     if "final_output" in event:
+                     if "final_output" in event and event["final_output"]:
                          st.write(event["final_output"])
                 
                 status.update(label="✅ Workflow Completed!", state="complete", expanded=False)
@@ -196,12 +218,12 @@ if st.session_state["graph_state"] == "PAUSED":
                 st.balloons()
                 st.success("🎉 Knowledge successfully saved to Notion!")
                 
-        # --- 拒绝按钮 ---
+        # [B] 拒绝按钮
         if col_Reject.button("❌ Reject & Reset", use_container_width=True):
             clear_inputs()
             st.rerun()
 
-# 3. 完成状态
+# --- 阶段 3: 完成状态 ---
 if st.session_state["graph_state"] == "COMPLETED":
     if st.button("Start New Task"):
         clear_inputs()

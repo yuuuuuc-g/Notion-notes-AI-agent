@@ -1,277 +1,162 @@
-
-from typing import  TypedDict, Dict, Any
+import operator
+from typing import TypedDict, Dict, Any
 from langgraph.graph import StateGraph, END
-from langgraph.checkpoint.memory import MemorySaver # 🌟 关键：内存检查点
+from langgraph.checkpoint.memory import MemorySaver
 from enum import Enum
+from pydantic import BaseModel, ValidationError
+
+# 导入业务逻辑
+from agents import ResearcherAgent, EditorAgent
+
+# 初始化
+researcher = ResearcherAgent()
+editor = EditorAgent()
 
 class KnowledgeDomain(str, Enum):
     SPANISH = "spanish_learning"
     TECH = "tech_knowledge"
     HUMANITIES = "humanities"
 
-# ==========================================
-# Knowledge Domain Routing
-# ==========================================
-
 INTENT_TO_DOMAIN = {
-    "SpanishLearning": KnowledgeDomain.SPANISH,
     "Spanish": KnowledgeDomain.SPANISH,
-    "Language": KnowledgeDomain.SPANISH,
-
     "Tech": KnowledgeDomain.TECH,
-    "Technology": KnowledgeDomain.TECH,
-    "AI": KnowledgeDomain.TECH,
-    "Science": KnowledgeDomain.TECH,
-
     "Humanities": KnowledgeDomain.HUMANITIES,
-    "SocialScience": KnowledgeDomain.HUMANITIES,
-    "History": KnowledgeDomain.HUMANITIES,
-    "Philosophy": KnowledgeDomain.HUMANITIES,
 }
 
-# 导入业务逻辑
-from agents import ResearcherAgent, EditorAgent
-
-# 初始化智能体（执行层）
-researcher = ResearcherAgent()
-editor = EditorAgent()
-
-def default_state() -> dict:
-    return {
-        # 输入
-        "user_input": "",
-        "uploaded_file": None,
-
-        # 中间变量
-        "raw_text": "",
-        "original_url": "",
-        "intent_type": "",
-        "knowledge_domain": None,   # 👈 与 AgentState 对齐（KnowledgeDomain | None）
-        "memory_match": {},
-
-        # 核心产物
-        "draft": {},
-
-        # 控制流
-        "retry_count": 0,
-        "error_message": "",
-        "final_output": "",
-
-        # Human-in-the-loop
-        "human_feedback": "",
-        "review_status": "pending",
-        "human_decision": "",
-        "override_database_id": "",
-
-        # 发布相关（显式建模，避免隐式 get）
-        "notion_database_id": None,
-    }
-
-# ==========================================
-# 1. 定义状态
-# ==========================================
+# --- State ---
 class AgentState(TypedDict):
-    # 输入
     user_input: str
     uploaded_file: Any
-    
-    # 中间变量
     raw_text: str
     original_url: str
     intent_type: str
     knowledge_domain: KnowledgeDomain
     memory_match: Dict
-    
-    # 核心产物
     draft: Dict
-    
-    # 控制流
     retry_count: int
     error_message: str
     final_output: str
-
+    # HITL
     human_feedback: str
-    review_status: str
-
-    human_decision: str   # "approve" | "reroute" | "edit"
     override_database_id: str
-
-from pydantic import BaseModel, ValidationError
+    # 发布
+    notion_database_id: str
+    
+    # 🛠️ 修复：定义 default_state 函数
+def default_state() -> dict:
+    """初始化默认状态，防止 KeyError"""
+    return {
+        "user_input": "",
+        "uploaded_file": None,
+        "raw_text": "",
+        "original_url": "",
+        "intent_type": "",
+        "knowledge_domain": None,
+        "memory_match": {},
+        "draft": {},
+        "retry_count": 0,
+        "error_message": "",
+        "final_output": "",
+        "human_feedback": "",
+        "override_database_id": "",
+        "notion_database_id": ""
+    }
 
 class DraftSchema(BaseModel):
     title: str
-    content: str
+    summary: str # 确保必须有 summary
 
-# ==========================================
-# 2. 填充节点逻辑 (Real Logic)
-# ==========================================
+# --- Nodes ---
 
 def node_perceiver(state: AgentState) -> AgentState:
-    """感知：读取输入"""
-    print("🔵 [Graph] Perceiver: Reading input...")
-    # 调用 Researcher 的真实感知能力
+    print("🔵 [Graph] Perceiver...")
     raw_text, url = researcher.perceive(state.get('user_input'), state.get('uploaded_file'))
-    
-    if not raw_text:
-        raise ValueError("Input processing failed (Empty content).")
-        
-    return {
-        "raw_text": raw_text, 
-        "original_url": url,
-    }
+    if not raw_text: raise ValueError("Empty input")
+    return {"raw_text": raw_text, "original_url": url}
 
 def node_classifier(state: AgentState) -> AgentState:
-    """分类：判断意图"""
-    print("🔵 [Graph] Classifier: Analyzing intent...")
-    intent_data = researcher.analyze_intent(state['raw_text'])
-    return {"intent_type": intent_data.get('type', 'General')}
+    print("🔵 [Graph] Classifier...")
+    data = researcher.analyze_intent(state['raw_text'])
+    return {"intent_type": data.get('type', 'Humanities')}
 
 def node_domain_router(state: AgentState) -> AgentState:
-    """
-    根据 intent_type 映射到具体知识领域（KnowledgeDomain）
-    """
-    intent = state.get("intent_type", "")
-    domain = INTENT_TO_DOMAIN.get(intent, KnowledgeDomain.TECH)
-
-    print(f"🧭 [Graph] Domain Router: intent='{intent}' -> domain='{domain.value}'")
-    return {"knowledge_domain": domain}
+    intent = state.get("intent_type", "Humanities")
+    # 模糊匹配，默认社科
+    domain = INTENT_TO_DOMAIN.get(intent, KnowledgeDomain.HUMANITIES)
+    
+    # 这里也要顺便把 notion_database_id 确定下来
+    import notion_ops
+    db_map = {
+        KnowledgeDomain.SPANISH: notion_ops.DB_SPANISH_ID,
+        KnowledgeDomain.TECH: notion_ops.DB_TECH_ID,
+        KnowledgeDomain.HUMANITIES: notion_ops.DB_HUMANITIES_ID
+    }
+    return {
+        "knowledge_domain": domain,
+        "notion_database_id": db_map.get(domain)
+    }
 
 def node_memory(state: AgentState) -> AgentState:
-    """记忆：单一向量库 + domain 作为 metadata"""
-    domain: KnowledgeDomain = state.get("knowledge_domain", KnowledgeDomain.TECH)
-    domain_value = domain.value
-    print(f"🔵 [Graph] Memory: Searching vector DB (domain={domain_value})...")
-
-    try:
-        # 新版接口：支持 domain 作为过滤条件
-        match = researcher.consult_memory(
-            query=state["raw_text"],
-            domain=domain_value
-        )
-    except TypeError:
-        # 旧版接口：不支持 domain，Graph 仍然保留语义信息
-        print("⚠️ [Graph] consult_memory() does not support domain, fallback to default")
-        match = researcher.consult_memory(state["raw_text"])
-
-    # 🌱 关键：把 domain 作为 metadata 注入 memory_match
-    if isinstance(match, dict):
-        match["domain"] = domain_value
-
+    domain = state.get("knowledge_domain")
+    print(f"🔵 [Graph] Memory (Domain: {domain.value})...")
+    # ✅ 直接传 domain.value，不再报错
+    match = researcher.consult_memory(state["raw_text"], domain=domain.value)
     return {"memory_match": match}
 
 def node_researcher(state: AgentState) -> AgentState:
-    """研究员：生成草稿"""
-    print(f"🔵 [Graph] Researcher: Drafting content (Attempt {state.get('retry_count', 0) + 1})...")
-    
-    # 这里的草稿生成逻辑已经包含了对西语/通用的不同处理
-    try:
-        # 新版接口：支持 error_context
-        draft = researcher.draft_content(
-            state["raw_text"],
-            state["intent_type"],
-            error_context=state.get("error_message", "")
-        )
-    except TypeError:
-        # 旧版接口：不支持 error_context
-        print("⚠️ [Graph] draft_content() does not support error_context, fallback to basic mode")
-        draft = researcher.draft_content(
-            state["raw_text"],
-            state["intent_type"]
-        )
+    print(f"🔵 [Graph] Researcher (Attempt {state.get('retry_count', 0) + 1})...")
+    # ✅ 直接传 error_message，实现自我纠错
+    draft = researcher.draft_content(
+        state["raw_text"],
+        state["intent_type"],
+        error_context=state.get("error_message", "")
+    )
     return {"draft": draft}
 
 def node_validator(state: AgentState) -> AgentState:
-    print("🔵 [Graph] Validator: Checking draft schema...")
-
-    draft = dict(state.get("draft", {}))
-
-    # 🔧 Draft Adapter：兼容旧版 Researcher 输出
-    if "content" not in draft:
-        if "summary" in draft:
-            draft["content"] = draft["summary"]
-            print("🛠️ [Graph] Adapter: mapped 'summary' -> 'content'")
-        elif "body" in draft:
-            draft["content"] = draft["body"]
-            print("🛠️ [Graph] Adapter: mapped 'body' -> 'content'")
-        elif "text" in draft:
-            draft["content"] = draft["text"]
-            print("🛠️ [Graph] Adapter: mapped 'text' -> 'content'")
-
+    print("🔵 [Graph] Validator...")
+    draft = state.get("draft", {})
     try:
-        DraftSchema(**draft)
-        return {
-            "draft": draft,   # ⚠️ 把修正后的 draft 写回 state
-            "error_message": ""
-        }
+        # 简单校验：必须有 title 和 summary
+        DraftSchema(**{k: v for k, v in draft.items() if k in ['title', 'summary']})
+        return {"error_message": ""}
     except ValidationError as e:
-        print("❌ [Graph] Validation Failed:", e)
+        print(f"❌ Validation Failed: {e}")
         return {
             "error_message": str(e),
             "retry_count": state.get("retry_count", 0) + 1
         }
 
 def node_human_review(state: AgentState) -> AgentState:
-    print("🟠 [Graph] Human Review: Processing human decision...")
-
-    override_db = state.get("override_database_id")
-
-    if override_db:
-        print(f"🧠 [Human] Final database override -> {override_db}")
-        return {
-            "notion_database_id": override_db
-        }
-
+    print("🟠 [Graph] Human Review...")
+    # 如果用户在界面选了覆盖数据库，这里生效
+    if state.get("override_database_id"):
+        return {"notion_database_id": state.get("override_database_id")}
     return {}
 
 def node_publisher(state: AgentState) -> AgentState:
-    """发布：写入 Notion"""
-    print("🔵 [Graph] Publisher: Writing to Notion...")
-
-    
-    try:
-        # 新版接口：支持 database_id（多数据库发布）
-        success = editor.publish(
-            draft=state['draft'],
-            intent_type=state['intent_type'],
-            memory_match=state['memory_match'],
-            raw_text=state['raw_text'],
-            original_url=state['original_url'],
-            database_id=state.get("notion_database_id"),
-            domain=state.get("knowledge_domain").value if state.get("knowledge_domain") else None  # 👈 新增（向后兼容）
-        )
-    except TypeError:
-        # 旧版接口：不支持 database_id
-        print("⚠️ [Graph] publish() does not support database_id, fallback to default database")
-        success = editor.publish(
-            draft=state['draft'],
-            intent_type=state['intent_type'],
-            memory_match=state['memory_match'],
-            raw_text=state['raw_text'],
-            original_url=state['original_url']
-        )
-    
-    msg = "✅ Published Successfully" if success else "❌ Publication Failed"
+    print("🔵 [Graph] Publisher...")
+    # ✅ 参数完全对齐
+    success = editor.publish(
+        draft=state['draft'],
+        intent_type=state['intent_type'],
+        memory_match=state['memory_match'],
+        raw_text=state['raw_text'],
+        original_url=state['original_url'],
+        database_id=state.get("notion_database_id"),
+        domain=state.get("knowledge_domain").value
+    )
+    msg = "✅ Published" if success else "❌ Failed"
     return {"final_output": msg}
 
-# ==========================================
-# 3. 路由逻辑
-# ==========================================
+# --- Edges ---
 def route_after_validation(state: AgentState):
-    if not state.get('error_message'):
-        return "human_review" # ✅ 通过 -> 人工审查
-    
-    if state.get('retry_count', 0) <= 2:
-        return "researcher"   # ❌ 失败 -> 重试 (自我纠错)
-    else:
-        return "human_review" # 💀 次数用尽 -> 强行交给人去改
+    if not state.get('error_message'): return "human_review"
+    if state.get('retry_count', 0) <= 2: return "researcher"
+    return "human_review"
 
-# ==========================================
-# 4. 构建图
-# ==========================================
-
+# --- Graph Construction ---
 workflow = StateGraph(AgentState)
-
-# 添加节点
 workflow.add_node("perceiver", node_perceiver)
 workflow.add_node("classifier", node_classifier)
 workflow.add_node("domain_router", node_domain_router)
@@ -281,55 +166,54 @@ workflow.add_node("validator", node_validator)
 workflow.add_node("human_review", node_human_review)
 workflow.add_node("publisher", node_publisher)
 
-# 设置流程线
 workflow.set_entry_point("perceiver")
 workflow.add_edge("perceiver", "classifier")
 workflow.add_edge("classifier", "domain_router")
 workflow.add_edge("domain_router", "memory")
 workflow.add_edge("memory", "researcher")
 workflow.add_edge("researcher", "validator")
-
-# 条件分支 (循环的核心)
-workflow.add_conditional_edges(
-    "validator",
-    route_after_validation,
-    {"human_review": "human_review", "researcher": "researcher"}
-)
-
+workflow.add_conditional_edges("validator", route_after_validation, {"human_review": "human_review", "researcher": "researcher"})
 workflow.add_edge("human_review", "publisher")
 workflow.add_edge("publisher", END)
 
-# 初始化内存
 checkpointer = MemorySaver()
-
-# 编译图：指定在 'human_review' 节点前中断
-app_graph = workflow.compile(
-    checkpointer=checkpointer, 
-    interrupt_before=["human_review"]
-)
-
+app_graph = workflow.compile(checkpointer=checkpointer, interrupt_before=["human_review"])
 # ==========================================
-# 5. 本地测试入口 (让文件可以独立运行)
+# 5. 本地测试入口 (CLI Mode)
 # ==========================================
 if __name__ == "__main__":
     print("🚀 Starting Graph Test (CLI Mode)...")
     
     # 模拟配置
-    config = {"configurable": {"thread_id": "test_thread_1"}}
+    config = {"configurable": {"thread_id": "test_cli_thread"}}
     
-    # 模拟输入
-    initial_state = {
-        **default_state(),
-        "user_input": "DeepSeek-V3 是一篇关于 AI 的论文...",
-        "uploaded_file": None
-    }
+    # 模拟输入 (这里用西语作为测试)
+    initial_state = default_state()
+    initial_state["user_input"] = "El verbo Ser se usa para características permanentes."
     
-    print(f"📥 Testing with input: {initial_state['user_input'][:20]}...")
+    print(f"📥 Testing with input: {initial_state['user_input']}...")
     
-    # 运行图
-    for event in app_graph.stream(initial_state, config, stream_mode="values"):
-        # 打印当前步骤更新了哪些字段
-        updated_keys = list(event.keys())
-        print(f"🔄 Graph Update: {updated_keys}")
-        
-    print("\n🛑 Graph paused at 'human_review' (Expected behavior).")
+    try:
+        # 1. 运行到断点
+        print("\n--- Phase 1: Thinking ---")
+        for event in app_graph.stream(initial_state, config, stream_mode="values"):
+            # 只打印最后更新的键，避免刷屏
+            pass 
+            
+        # 检查当前状态
+        snapshot = app_graph.get_state(config)
+        if snapshot.next and snapshot.next[0] == "human_review":
+            print("\n🛑 Graph paused at 'human_review' successfully.")
+            print(f"   Draft Title: {snapshot.values['draft'].get('title')}")
+            
+            # 2. 模拟人工批准并继续
+            print("\n--- Phase 2: Human Approval ---")
+            print("👤 Human says: Approve!")
+            
+            # 继续运行
+            for event in app_graph.stream(None, config, stream_mode="values"):
+                if "final_output" in event:
+                    print(f"\n🏁 Final Output: {event['final_output']}")
+                    
+    except Exception as e:
+        print(f"\n❌ Test Failed: {e}")
