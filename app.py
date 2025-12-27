@@ -106,7 +106,7 @@ config = {"configurable": {"thread_id": st.session_state["thread_id"]}}
 
 if not submit_btn and st.session_state["graph_state"] == "IDLE":
     if os.path.exists("banner.jpg"):
-        st.image("banner.jpg", use_container_width=True) 
+        st.image("banner.jpg", width="stretch") 
     else:
         st.info("👈 **Start here**: Upload a file or paste content in the sidebar.")
 
