@@ -6,7 +6,7 @@ requests
 httpx
 beautifulsoup4
 PyPDF2
-yt-dlp
+# yt-dlp
 edge-tts
 pydub
 audioop-lts

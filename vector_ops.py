@@ -2,21 +2,20 @@ import os
 import chromadb
 from chromadb.utils import embedding_functions
 from dotenv import load_dotenv
-from typing import Optional, Dict, Any # ✅ 新增导入
+from typing import Optional, Dict, Any 
 
 load_dotenv()
 
 # --- 配置 ---
-# 这里使用 Chroma 默认的 SentenceTransformer (完全免费，本地运行，不用 API Key)
-# 第一次运行会自动下载模型 (约 80MB)
+# 这里使用 Chroma 默认的 SentenceTransformer
 EMBEDDING_FUNC = embedding_functions.SentenceTransformerEmbeddingFunction(
     model_name="all-MiniLM-L6-v2"
 )
 
-# 初始化本地数据库 (会在项目目录下生成一个 chromadb 文件夹)
+# 初始化本地数据库
 client = chromadb.PersistentClient(path="./chroma_db")
 
-# 创建或获取集合 (Collection)
+# 创建或获取集合
 collection = client.get_or_create_collection(
     name="knowledge_base",
     embedding_function=EMBEDDING_FUNC
@@ -30,28 +29,14 @@ def add_memory(
     *,
     content=None,
     intent_type=None,
-    metadata: Optional[Dict[str, Any]] = None, # ✅ 修复：使用 Optional 兼容 Python 3.9
+    metadata: Optional[Dict[str, Any]] = None, 
 ):
     """
-    存入记忆（工业级 V2）
-
-    兼容两种调用方式：
-
-    1️⃣ 旧版（positional）:
-        add_memory(page_id, text, title, category)
-
-    2️⃣ 新版（keyword）:
-        add_memory(
-            page_id=...,
-            content=...,
-            title=...,
-            intent_type=...,
-            metadata={...}
-        )
+    存入记忆（已修复 Metadata 空值崩溃问题）
     """
-
-    # ---------- 参数归一化 ----------
-    final_content = content if content is not None else text_content
+    
+    # 1️⃣ 【第一步】参数归一化（先定义变量！）
+    # 必须先算出 final_title 和 final_category，后面才能用
     final_title = title or (metadata.get("title") if metadata else "Untitled")
     final_category = (
         intent_type
@@ -59,20 +44,39 @@ def add_memory(
         or (metadata.get("category") if metadata else "General")
     )
 
-    if not final_content:
-        print("❌ VectorOps: content is empty, skip memory.")
+    # content 优先，其次才允许 text_content
+    final_content = content
+
+    # 兼容旧逻辑
+    if final_content is None and text_content:
+        final_content = text_content
+
+    # 2️⃣ 【第二步】安全检查
+    if not isinstance(final_content, str) or len(final_content.strip()) < 30:
+        print("❌ VectorOps: content too short or invalid, skip memory.")
         return False
 
+    # 3️⃣ 【第三步】准备原始 Metadata
     final_metadata = metadata or {}
     final_metadata.setdefault("title", final_title)
     final_metadata.setdefault("category", final_category)
 
+    # 4️⃣ 【第四步】关键修复：清洗 Metadata
+    # ChromaDB 痛恨 None 值。我们需要清洗 metadata，把所有的 None 变成空字符串 ""
+    cleaned_metadata = {}
+    for k, v in final_metadata.items():
+        if v is None:
+            cleaned_metadata[k] = ""  # 强制转为空字符串
+        else:
+            cleaned_metadata[k] = str(v) # 强制转为字符串，防止由其他类型引起的报错
+
     print(f"💾 Vectorizing memory: {final_title}...")
 
+    # 5️⃣ 【第五步】写入数据库
     try:
         collection.add(
             documents=[final_content],
-            metadatas=[final_metadata],
+            metadatas=[cleaned_metadata], # 👈 这里传入清洗后的数据
             ids=[page_id],
         )
         print("✅ Memory stored in Vector DB.")
@@ -86,6 +90,12 @@ def search_memory(query_text, n_results=1, category_filter=None):
     检索记忆：寻找最相似的笔记
     :param category_filter: (可选) 过滤特定分类
     """
+
+    # ---------- Query Sanity Check ----------
+    if not isinstance(query_text, str) or len(query_text.strip()) < 10:
+        print("⚠️ VectorOps: query too short, skip search.")
+        return {"match": False}
+
     print(f"🔍 Vector Searching for: {query_text[:20]}... (Filter: {category_filter})")
     
     # 构造查询参数
@@ -104,20 +114,22 @@ def search_memory(query_text, n_results=1, category_filter=None):
         # Chroma 返回的结构比较复杂，我们需要解包
         if results['ids'] and results['ids'][0]:
             # 获取相似度距离 (Distance)
-            # Distance 越小越相似。一般 < 0.3 或 0.4 算非常相似
             distance = results['distances'][0][0]
             page_id = results['ids'][0][0]
             metadata = results['metadatas'][0][0]
             
             print(f"   Found candidate: {metadata.get('title')} (Dist: {distance:.4f})")
             
-            # 设定一个阈值，如果距离太远(比如 > 0.5)，认为是不相关的
-            if distance < 0.5: 
+            # ⚠️ 严格阈值
+            THRESHOLD = 0.3 if category_filter == "spanish_learning" else 0.5
+
+            if distance < THRESHOLD:
                 return {
                     "match": True,
                     "page_id": page_id,
                     "title": metadata.get("title"),
                     "distance": distance,
+                    "category": metadata.get("category"),
                     "metadata": metadata,
                 }
             else:
