@@ -107,8 +107,11 @@ config = {"configurable": {"thread_id": st.session_state["thread_id"]}}
 if not submit_btn and st.session_state["graph_state"] == "IDLE":
     if os.path.exists("banner.jpg"):
         st.image("banner.jpg", width="stretch") 
-    else:
-        st.info("👈 **Start here**: Upload a file or paste content in the sidebar.")
+        st.markdown("""
+        <div style="text-align: center; color: #666; font-size: 16px; margin-top: 5px;">
+        让知识有机生长
+        </div>
+        """, unsafe_allow_html=True)
 
 # 1. 启动逻辑
 if submit_btn and st.session_state["graph_state"] == "IDLE":

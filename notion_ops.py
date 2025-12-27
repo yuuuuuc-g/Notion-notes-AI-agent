@@ -1,4 +1,5 @@
 import os
+import re
 import requests
 from notion_client import Client
 from dotenv import load_dotenv
@@ -21,14 +22,228 @@ def chunk_text(text, max_len=1900):
 
 def clean_text(text):
     """
-    清洗文本：去除 Markdown 符号
+    清洗文本：彻底去除 Markdown 行内符号 (***, **, *, `)
     """
     if text is None: return ""
     text = str(text)
-    text = text.replace("**", "").replace("`", "")
+    
+    # 1. 暴力去除所有星号 * (解决 ***, **, *)
+    text = text.replace("*", "")
+    
+    # 2. 去除反引号 `
+    text = text.replace("`", "")
+    
+    # 3. 去除行首可能残留的 "- " (如果之前解析漏了)
     if text.strip().startswith("- "):
         text = text.strip()[2:]
-    return text
+        
+    return text.strip()
+
+def markdown_to_blocks(markdown_text):
+    """
+    将 Markdown 文本转换为 Notion Blocks 结构
+    支持：H1-H3, 列表, 引用, 代码块, 以及表格
+    """
+    blocks = []
+    if not markdown_text:
+        return blocks
+        
+    lines = markdown_text.split('\n')
+    
+    # 状态标记
+    code_mode = False
+    code_content = []
+    
+    table_mode = False
+    table_rows = [] # 暂存表格行数据
+
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        
+        # ====================
+        # 1. 处理代码块 (```)
+        # ====================
+        if stripped.startswith("```"):
+            # 如果正在录入表格，先强制结束表格
+            if table_mode:
+                if table_rows:
+                    # 计算列数 (以第一行为准)
+                    width = len(table_rows[0])
+                    table_children = []
+                    for row_cells in table_rows:
+                        # 补齐或截断单元格以匹配宽度 (Notion要求每行单元格数一致)
+                        current_cells = row_cells[:width] + [""] * (width - len(row_cells))
+                        # 构建单元格对象
+                        notion_cells = [[{"type": "text", "text": {"content": cell}}] for cell in current_cells]
+                        table_children.append({
+                            "type": "table_row",
+                            "table_row": {"cells": notion_cells}
+                        })
+                    
+                    blocks.append({
+                        "object": "block", "type": "table",
+                        "table": {
+                            "table_width": width,
+                            "has_column_header": True, # 默认第一行是表头
+                            "has_row_header": False,
+                            "children": table_children
+                        }
+                    })
+                table_mode = False
+                table_rows = []
+
+            if code_mode:
+                blocks.append({
+                    "object": "block", "type": "code",
+                    "code": {
+                        "rich_text": [{"type": "text", "text": {"content": "\n".join(code_content)}}],
+                        "language": "plain text"
+                    }
+                })
+                code_mode = False
+                code_content = []
+            else:
+                code_mode = True
+            continue
+            
+        if code_mode:
+            code_content.append(line)
+            continue
+
+        # ====================
+        # 2. 处理表格 (|)
+        # ====================
+        # 判定是否是表格行：以 | 开头 并 以 | 结尾 (宽松一点，至少包含 |)
+        if stripped.startswith('|'):
+            table_mode = True
+            # 解析单元格：去除首尾 |，然后按 | 分割
+            # 例子: "| A | B |" -> " A | B " -> [" A ", " B "]
+            raw_cells = stripped.strip('|').split('|')
+            clean_cells = [clean_text(c) for c in raw_cells]
+            
+            # 检查是否是分隔线 (如 |---|---| )，如果是则跳过
+            is_separator = True
+            for cell in clean_cells:
+                if any(c not in '-: ' for c in cell): # 如果包含除了 - : 空格 以外的字符，就不是分隔线
+                    is_separator = False
+                    break
+            
+            if not is_separator:
+                table_rows.append(clean_cells)
+            continue
+        
+        # 如果当前行不是表格，但之前在录入表格 -> 结算表格
+        if table_mode:
+            if table_rows:
+                width = len(table_rows[0])
+                table_children = []
+                for row_cells in table_rows:
+                    # 补齐列宽
+                    current_cells = row_cells[:width] + [""] * (width - len(row_cells))
+                    notion_cells = [[{"type": "text", "text": {"content": cell}}] for cell in current_cells]
+                    table_children.append({
+                        "type": "table_row",
+                        "table_row": {"cells": notion_cells}
+                    })
+                
+                blocks.append({
+                    "object": "block", "type": "table",
+                    "table": {
+                        "table_width": width,
+                        "has_column_header": True,
+                        "has_row_header": False,
+                        "children": table_children
+                    }
+                })
+            table_mode = False
+            table_rows = []
+
+        # 空行跳过
+        if not stripped:
+            continue
+
+        # ====================
+        # 3. 普通 Markdown 转换
+        # ====================
+        if stripped.startswith('# '):
+            content = clean_text(stripped[2:])
+            blocks.append({
+                "object": "block", "type": "heading_1",
+                "heading_1": {"rich_text": [{"type": "text", "text": {"content": content}}]}
+            })
+        elif stripped.startswith('## '):
+            content = clean_text(stripped[3:])
+            blocks.append({
+                "object": "block", "type": "heading_2",
+                "heading_2": {"rich_text": [{"type": "text", "text": {"content": content}}]}
+            })
+        elif stripped.startswith('### '):
+            content = clean_text(stripped[4:])
+            blocks.append({
+                "object": "block", "type": "heading_3",
+                "heading_3": {"rich_text": [{"type": "text", "text": {"content": content}}]}
+            })
+        elif stripped.startswith('- ') or stripped.startswith('* '):
+            content = clean_text(stripped[2:])
+            blocks.append({
+                "object": "block", "type": "bulleted_list_item",
+                "bulleted_list_item": {"rich_text": [{"type": "text", "text": {"content": content}}]}
+            })
+        elif stripped[0].isdigit() and stripped[1:3] == '. ':
+            try:
+                content = clean_text(stripped.split('. ', 1)[1])
+            except:
+                content = clean_text(stripped)
+            blocks.append({
+                "object": "block", "type": "numbered_list_item",
+                "numbered_list_item": {"rich_text": [{"type": "text", "text": {"content": content}}]}
+            })
+        elif stripped.startswith('> '):
+            content = clean_text(stripped[2:])
+            blocks.append({
+                "object": "block", "type": "quote",
+                "quote": {"rich_text": [{"type": "text", "text": {"content": content}}]}
+            })
+        else:
+            # 普通段落
+            content = clean_text(stripped)
+            blocks.append({
+                "object": "block", "type": "paragraph",
+                "paragraph": {"rich_text": [{"type": "text", "text": {"content": content}}]}
+            })
+
+    # ====================
+    # 循环结束后，检查是否还有未结算的表格或代码块
+    # ====================
+    if table_mode and table_rows:
+        width = len(table_rows[0])
+        table_children = []
+        for row_cells in table_rows:
+            current_cells = row_cells[:width] + [""] * (width - len(row_cells))
+            notion_cells = [[{"type": "text", "text": {"content": cell}}] for cell in current_cells]
+            table_children.append({
+                "type": "table_row",
+                "table_row": {"cells": notion_cells}
+            })
+        blocks.append({
+            "object": "block", "type": "table",
+            "table": {
+                "table_width": width,
+                "has_column_header": True,
+                "children": table_children
+            }
+        })
+        
+    if code_mode and code_content:
+        blocks.append({
+            "object": "block", "type": "code",
+            "code": {
+                "rich_text": [{"type": "text", "text": {"content": "\n".join(code_content)}}],
+                "language": "plain text"
+            }
+        })
+            
+    return blocks
 
 
 def build_content_blocks(summary, blocks):
@@ -225,14 +440,37 @@ def create_study_note(title, category, summary, blocks, original_url=None):
 def create_general_note(data, target_db_id, original_url=None):
     title = data.get('title', 'Unnamed')
     clean_title = clean_text(title)
+    summary = data.get('summary')
+    
     print(f"✍️ Creating General Note: {clean_title}...")
     
-    blocks = data.get('blocks') or data.get('key_points', []) 
-    children = build_content_blocks(data.get('summary'), blocks)
+    # 🔥 核心修改：优先检查是否使用了 Markdown 格式
+    if 'markdown_body' in data and data['markdown_body']:
+        print("📝 Detected Markdown content. Converting...")
+        # 1. 先生成 Markdown 转换后的 Blocks
+        content_blocks = markdown_to_blocks(data['markdown_body'])
+        
+        # 2. 手动把 Summary 加在最前面 (Callout 样式)
+        children = []
+        if summary:
+            children.append({
+                "object": "block", "type": "callout",
+                "callout": {
+                    "rich_text": [{"text": {"content": clean_text(summary)}}],
+                    "icon": {"emoji": "💡"}, "color": "gray_background"
+                }
+            })
+        children.extend(content_blocks)
+        
+    else:
+        # 🔄 回退逻辑：如果没有 Markdown，还是用老办法 (build_content_blocks)
+        blocks = data.get('blocks') or data.get('key_points', []) 
+        children = build_content_blocks(summary, blocks)
 
-    if not data.get('blocks') and blocks:
-        children.insert(1, {"object": "block", "type": "heading_2", "heading_2": {"rich_text": [{"text": {"content": "📝 Key Takeaways"}}], "color": "blue"}})
+        if not data.get('blocks') and blocks:
+            children.insert(1, {"object": "block", "type": "heading_2", "heading_2": {"rich_text": [{"text": {"content": "📝 Key Takeaways"}}], "color": "blue"}})
 
+    # 添加来源链接
     if original_url:
         children.append({"object": "block", "type": "paragraph", "paragraph": {"rich_text": [{"text": {"content": f"🔗 Source: {original_url}", "link": {"url": original_url}}}]}})
 
@@ -251,21 +489,74 @@ def create_general_note(data, target_db_id, original_url=None):
             },
             children=children
         )
-        print("✅ General Note Created!")
+        print("✅ General Note Created with Markdown!")
         return response["id"]
     except Exception as e:
         print(f"❌ Failed: {e}")
         return None
 
-def append_to_page(page_id, summary, blocks):
+
+def append_to_page(page_id, data):
+    """
+    ✅ 终极版追加函数
+    功能：
+    1. 既然支持 Markdown (优先)，也兼容旧的 blocks 列表。
+    2. 自动添加 "Update" 标题和分割线。
+    3. 处理 Notion API 的 100 个 block 限制（分批写入）。
+    """
     print(f"➕ Appending content to page {page_id}...")
-    children = []
-    children.append({"object": "block", "type": "divider", "divider": {}})
-    children.extend(build_content_blocks(f"New Update: {summary}", blocks))
+    
+    # 1. 准备分割线 (Divider) 和 更新说明 (Heading)
+    # 获取标题，如果没有则用当前时间或默认文字
+    update_title = data.get('title', 'New Update')
+    
+    header_blocks = [
+        {"object": "block", "type": "divider", "divider": {}},
+        {"object": "block", "type": "heading_2", "heading_2": {
+            "rich_text": [{"text": {"content": f"Update: {update_title}"}}], 
+            "color": "blue_background"
+        }}
+    ]
+
+    # 2. 解析正文 (核心逻辑)
+    content_blocks = []
+    
+    # A 计划: 优先使用 Markdown (这是新 Agent 的主力格式)
+    if data.get("markdown_body"):
+        print("📝 Converting Markdown body to blocks...")
+        content_blocks = markdown_to_blocks(data["markdown_body"])
+        
+    # B 计划: 兼容旧格式 (如果 data 里只有 blocks)
+    elif data.get("blocks"):
+        print("🧱 Using legacy blocks format...")
+        content_blocks = build_content_blocks(data.get("summary", ""), data["blocks"])
+        
+    # C 计划: 兜底 (只有纯文本)
+    else:
+        print("📄 Using raw text fallback...")
+        raw_text = str(data)
+        content_blocks = [{"object": "block", "type": "paragraph", "paragraph": {"rich_text": [{"text": {"content": raw_text}}]}}]
+
+    # 3. 合并 Header 和 Content
+    all_children = header_blocks + content_blocks
+
+    if not all_children:
+        print("⚠️ Nothing to append.")
+        return False
+
+    # 4. 调用 API (分批处理，因为 Notion 一次限制 100 个 block)
     try:
-        notion.blocks.children.append(block_id=page_id, children=children)
+        batch_size = 100
+        total_batches = (len(all_children) + batch_size - 1) // batch_size
+        
+        for i in range(0, len(all_children), batch_size):
+            batch = all_children[i:i + batch_size]
+            notion.blocks.children.append(block_id=page_id, children=batch)
+            print(f"   - Batch {i//batch_size + 1}/{total_batches} appended.")
+            
         print("✅ Appended successfully!")
         return True
+        
     except Exception as e:
         print(f"❌ Append failed: {e}")
         return False
@@ -282,4 +573,67 @@ def add_row_to_table(table_id, row_data):
         return True
     except Exception as e:
         print(f"❌ Table insert failed: {e}")
+        return False
+    
+
+def get_page_text(page_id):
+    """
+    读取 Notion 页面内容，转换为纯文本，供 LLM 参考
+    注意：为了节省 Token，这里只读取文本类 Block，忽略图片/表格的复杂结构
+    """
+    print(f"📖 Reading content from page {page_id}...")
+    try:
+        # 获取所有 block
+        response = notion.blocks.children.list(block_id=page_id)
+        blocks = response.get("results", [])
+        
+        full_text = []
+        for b in blocks:
+            b_type = b.get("type")
+            # 提取 rich_text 里的内容
+            if b_type in ["paragraph", "heading_1", "heading_2", "heading_3", "bulleted_list_item", "numbered_list_item", "quote", "callout"]:
+                rich_text = b.get(b_type, {}).get("rich_text", [])
+                text = "".join([t.get("plain_text", "") for t in rich_text])
+                if text:
+                    full_text.append(text)
+            
+            # 简单处理代码块
+            elif b_type == "code":
+                rich_text = b.get("code", {}).get("rich_text", [])
+                code = "".join([t.get("plain_text", "") for t in rich_text])
+                full_text.append(f"```\n{code}\n```")
+
+        return "\n\n".join(full_text)
+    except Exception as e:
+        print(f"❌ Failed to read page: {e}")
+        return ""
+
+def overwrite_page_content(page_id, draft_data):
+    """
+    🔥 危险操作：清空页面当前内容，并写入融合后的新内容
+    """
+    print(f"♻️ Overwriting page {page_id} with merged content...")
+    
+    try:
+        # 1. 获取当前所有 block ID
+        response = notion.blocks.children.list(block_id=page_id)
+        blocks = response.get("results", [])
+        
+        # 2. 逐个删除 (Notion API 不支持批量删除，这步可能比较慢)
+        # 建议保留前 2 个 block (通常是标题或 meta 信息)？不，全删更干净。
+        for b in blocks:
+            try:
+                notion.blocks.delete(block_id=b["id"])
+            except:
+                pass # 忽略删除失败
+        
+        print("   - Old content cleared.")
+
+        # 3. 写入新内容 (复用 append 逻辑，但因为页面空了，所以等于重写)
+        # 这里直接调用我们写好的 append_to_page 即可
+        # 因为 append 本质上就是往页面里塞 block
+        return append_to_page(page_id, draft_data)
+
+    except Exception as e:
+        print(f"❌ Overwrite failed: {e}")
         return False

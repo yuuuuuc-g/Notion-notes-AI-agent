@@ -32,11 +32,10 @@ def add_memory(
     metadata: Optional[Dict[str, Any]] = None, 
 ):
     """
-    存入记忆（已修复 Metadata 空值崩溃问题）
+    存入记忆（已修复 Metadata 空值崩溃问题 + 优化向量匹配精度）
     """
     
-    # 1️⃣ 【第一步】参数归一化（先定义变量！）
-    # 必须先算出 final_title 和 final_category，后面才能用
+    # 1️⃣ 【第一步】参数归一化
     final_title = title or (metadata.get("title") if metadata else "Untitled")
     final_category = (
         intent_type
@@ -44,10 +43,8 @@ def add_memory(
         or (metadata.get("category") if metadata else "General")
     )
 
-    # content 优先，其次才允许 text_content
+    # content 优先
     final_content = content
-
-    # 兼容旧逻辑
     if final_content is None and text_content:
         final_content = text_content
 
@@ -61,25 +58,32 @@ def add_memory(
     final_metadata.setdefault("title", final_title)
     final_metadata.setdefault("category", final_category)
 
-    # 4️⃣ 【第四步】关键修复：清洗 Metadata
-    # ChromaDB 痛恨 None 值。我们需要清洗 metadata，把所有的 None 变成空字符串 ""
+    # 4️⃣ 【第四步】清洗 Metadata (去除 None)
     cleaned_metadata = {}
     for k, v in final_metadata.items():
         if v is None:
-            cleaned_metadata[k] = ""  # 强制转为空字符串
+            cleaned_metadata[k] = "" 
         else:
-            cleaned_metadata[k] = str(v) # 强制转为字符串，防止由其他类型引起的报错
+            cleaned_metadata[k] = str(v)
 
     print(f"💾 Vectorizing memory: {final_title}...")
 
-    # 5️⃣ 【第五步】写入数据库
+    # 5️⃣ 【第五步】构建增强版 Embedding 文本 (关键修改)
+    # 获取摘要
+    summary_text = metadata.get("summary", "") if metadata else ""
+    
+    # 拼接：Title + Summary + Content
+    # 目的：确保核心关键词出现在文本最开头，防止被 Embedding 模型截断
+    embedding_text = f"Title: {final_title}\nSummary: {summary_text}\nContent: {final_content}"
+
+    # 6️⃣ 【第六步】写入数据库
     try:
         collection.add(
-            documents=[final_content],
-            metadatas=[cleaned_metadata], # 👈 这里传入清洗后的数据
+            documents=[embedding_text], # 👈 Chroma 会自动为此文本计算向量
+            metadatas=[cleaned_metadata], 
             ids=[page_id],
         )
-        print("✅ Memory stored in Vector DB.")
+        print("✅ Memory stored in Vector DB (Optimized with Title prioritization).")
         return True
     except Exception as e:
         print(f"❌ Failed to store vector: {e}")
