@@ -408,34 +408,7 @@ def get_page_structure(page_id):
         return "\n".join(structure_desc), tables
     except: return "", []
 
-# --- 核心操作 (保持不变) ---
-def create_study_note(title, category, summary, blocks, original_url=None):
-    print(f"✍️ Creating Spanish Note: {title}...")
-    clean_title = clean_text(title)
-    children = build_content_blocks(summary, blocks)
-    
-    if original_url:
-        children.append({
-             "object": "block", "type": "paragraph",
-             "paragraph": {"rich_text": [{"text": {"content": f"🔗 Source: {original_url}", "link": {"url": original_url}}}]}
-        })
-
-    try:
-        response = notion.pages.create(
-            parent={"database_id": DB_SPANISH_ID},
-            properties={
-                "Name": {"title": [{"text": {"content": clean_title}}]},
-                "Tags": {"multi_select": [{"name": "Spanish"}]}, 
-                "Category": {"select": {"name": category}},
-                "URL": {"url": original_url if original_url else None}
-            },
-            children=children
-        )
-        print("✅ Study Note Created!")
-        return response["id"]
-    except Exception as e:
-        print(f"❌ Failed: {e}")
-        return None
+# --- 核心操作 ---
 
 def create_general_note(data, target_db_id, original_url=None):
     title = data.get('title', 'Unnamed')
@@ -470,10 +443,6 @@ def create_general_note(data, target_db_id, original_url=None):
         if not data.get('blocks') and blocks:
             children.insert(1, {"object": "block", "type": "heading_2", "heading_2": {"rich_text": [{"text": {"content": "📝 Key Takeaways"}}], "color": "blue"}})
 
-    # 添加来源链接
-    if original_url:
-        children.append({"object": "block", "type": "paragraph", "paragraph": {"rich_text": [{"text": {"content": f"🔗 Source: {original_url}", "link": {"url": original_url}}}]}})
-
     try:
         if not target_db_id:
             print("❌ Error: Target DB ID is missing.")
@@ -496,65 +465,78 @@ def create_general_note(data, target_db_id, original_url=None):
         return None
 
 
-def append_to_page(page_id, data):
+def append_to_page(page_id, data, restore_mode=False):
     """
-    ✅ 终极版追加函数
-    功能：
-    1. 既然支持 Markdown (优先)，也兼容旧的 blocks 列表。
-    2. 自动添加 "Update" 标题和分割线。
-    3. 处理 Notion API 的 100 个 block 限制（分批写入）。
+    ✅ 终极版追加函数 (v2.0)
+    :param restore_mode: 如果为 True，表示这是“覆盖重写”操作。
+                         此时不加分割线和 Update 标题，而是恢复 Summary Callout。
     """
-    print(f"➕ Appending content to page {page_id}...")
+    print(f"➕ Appending content to page {page_id} (Restore Mode: {restore_mode})...")
     
-    # 1. 准备分割线 (Divider) 和 更新说明 (Heading)
-    # 获取标题，如果没有则用当前时间或默认文字
-    update_title = data.get('title', 'New Update')
-    
-    header_blocks = [
-        {"object": "block", "type": "divider", "divider": {}},
-        {"object": "block", "type": "heading_2", "heading_2": {
-            "rich_text": [{"text": {"content": f"Update: {update_title}"}}], 
-            "color": "blue_background"
-        }}
-    ]
+    children = []
+
+    # ==================================================
+    # 1. 头部处理 (Header Logic)
+    # ==================================================
+    if restore_mode:
+        # 模式 A: 覆盖重写 (像一篇新文章)
+        # 1.1 恢复 Summary Callout
+        summary = data.get("summary")
+        if summary:
+            children.append({
+                "object": "block", "type": "callout",
+                "callout": {
+                    "rich_text": [{"text": {"content": clean_text(summary)}}],
+                    "icon": {"emoji": "💡"}, "color": "gray_background"
+                }
+            })
+        # 覆盖模式下，不需要 "Update: Title" 这种标题，因为 Notion 页面本身有标题属性
+    else:
+        # 模式 B: 底部追加 (Append)
+        # 1.2 添加分割线和 Update 标题
+        update_title = data.get('title', 'New Update')
+        children.extend([
+            {"object": "block", "type": "divider", "divider": {}},
+            {"object": "block", "type": "heading_2", "heading_2": {
+                "rich_text": [{"text": {"content": f"Update: {update_title}"}}], 
+                "color": "blue_background"
+            }}
+        ])
 
     # 2. 解析正文 (核心逻辑)
     content_blocks = []
     
-    # A 计划: 优先使用 Markdown (这是新 Agent 的主力格式)
-    if data.get("markdown_body"):
+    if data.get("markdown_body"):    #  优先使用 Markdown (这是新 Agent 的主力格式)
         print("📝 Converting Markdown body to blocks...")
         content_blocks = markdown_to_blocks(data["markdown_body"])
         
-    # B 计划: 兼容旧格式 (如果 data 里只有 blocks)
-    elif data.get("blocks"):
+    elif data.get("blocks"):         #  兼容旧格式 (如果 data 里只有 blocks)
         print("🧱 Using legacy blocks format...")
         content_blocks = build_content_blocks(data.get("summary", ""), data["blocks"])
         
-    # C 计划: 兜底 (只有纯文本)
-    else:
+    else:                            #  兜底 (只有纯文本)
         print("📄 Using raw text fallback...")
         raw_text = str(data)
         content_blocks = [{"object": "block", "type": "paragraph", "paragraph": {"rich_text": [{"text": {"content": raw_text}}]}}]
 
     # 3. 合并 Header 和 Content
-    all_children = header_blocks + content_blocks
+    children.extend(content_blocks)
 
-    if not all_children:
+    if not children:
         print("⚠️ Nothing to append.")
         return False
 
     # 4. 调用 API (分批处理，因为 Notion 一次限制 100 个 block)
     try:
         batch_size = 100
-        total_batches = (len(all_children) + batch_size - 1) // batch_size
+        total_batches = (len(children) + batch_size - 1) // batch_size
         
-        for i in range(0, len(all_children), batch_size):
-            batch = all_children[i:i + batch_size]
+        for i in range(0, len(children), batch_size):
+            batch = children[i:i + batch_size]
             notion.blocks.children.append(block_id=page_id, children=batch)
             print(f"   - Batch {i//batch_size + 1}/{total_batches} appended.")
             
-        print("✅ Appended successfully!")
+        print("✅ Content updated successfully!")
         return True
         
     except Exception as e:
@@ -608,6 +590,8 @@ def get_page_text(page_id):
         print(f"❌ Failed to read page: {e}")
         return ""
 
+# notion_ops.py
+
 def overwrite_page_content(page_id, draft_data):
     """
     🔥 危险操作：清空页面当前内容，并写入融合后的新内容
@@ -619,20 +603,18 @@ def overwrite_page_content(page_id, draft_data):
         response = notion.blocks.children.list(block_id=page_id)
         blocks = response.get("results", [])
         
-        # 2. 逐个删除 (Notion API 不支持批量删除，这步可能比较慢)
-        # 建议保留前 2 个 block (通常是标题或 meta 信息)？不，全删更干净。
+        # 2. 逐个删除
         for b in blocks:
             try:
                 notion.blocks.delete(block_id=b["id"])
             except:
-                pass # 忽略删除失败
+                pass
         
         print("   - Old content cleared.")
 
-        # 3. 写入新内容 (复用 append 逻辑，但因为页面空了，所以等于重写)
-        # 这里直接调用我们写好的 append_to_page 即可
-        # 因为 append 本质上就是往页面里塞 block
-        return append_to_page(page_id, draft_data)
+        # 3. 写入新内容 (关键修改：开启 restore_mode)
+        # 这样就会带上 Summary，且没有 "Update" 标题
+        return append_to_page(page_id, draft_data, restore_mode=True)
 
     except Exception as e:
         print(f"❌ Overwrite failed: {e}")

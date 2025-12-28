@@ -75,7 +75,7 @@ def reset_pipeline():
 with st.sidebar:
     st.markdown("""
         <h1 style='text-align: left; font-family: sans-serif; font-weight: 800; margin-bottom: 5px;'>
-            <span style='font-size: 34px;'>💠</span>
+            <span style='font-size: 32px;'>💠</span>
             <span style='font-size: 30px; background: linear-gradient(to right, #4facfe 0%, #00f2fe 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent;'>
                 InfoPrism
             </span>
