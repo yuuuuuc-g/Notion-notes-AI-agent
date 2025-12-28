@@ -271,3 +271,82 @@ app_graph = workflow.compile(
     checkpointer=checkpointer,
     interrupt_before=["human_review"],
 )
+
+# 编译图
+app = workflow.compile()
+
+# ==========================================
+# 🔥 5. 本地运行入口 (CLI Entry Point) 
+# ==========================================
+if __name__ == "__main__":
+    import sys
+    import os
+    
+    # --- 1. 读取 txt 文件逻辑 (保持不变) ---
+    TEST_FILE_NAME = "test_input.txt"
+    print(f"🚀 Starting Local Graph Test...")
+
+    if os.path.exists(TEST_FILE_NAME):
+        try:
+            with open(TEST_FILE_NAME, "r", encoding="utf-8") as f:
+                test_input = f.read().strip()
+            if not test_input:
+                test_input = "什么是批判性思维？" 
+            else:
+                print(f"📂 成功读取文件: {TEST_FILE_NAME}")
+        except Exception as e:
+            print(f"❌ 读取文件出错: {e}")
+            test_input = "Error."
+    else:
+        # 自动创建文件方便下次用
+        with open(TEST_FILE_NAME, "w", encoding="utf-8") as f:
+            f.write("在这里粘贴你想测试的内容...")
+        test_input = "在这里粘贴你想测试的内容..."
+
+    print("-" * 50)
+
+    # --- 2. 构造初始状态 (🔴 关键修改在这里) ---
+    initial_state = {
+        "user_input": test_input,
+        
+        # ✅ 这里必须手动加上 raw_text！
+        # 因为 Streamlit 在调用前帮你加了，但在本地我们得自己加。
+        "raw_text": test_input,  
+        
+        "file_path": None,
+        "intent": {}, # 注意：你的 State 定义里好像叫 intent_type，这里其实可以留空，Classifier 会填充
+        "intent_type": "", # 初始化为空
+        "knowledge_domain": None,
+        "memory_match": {},
+        "draft": {},
+        "retry_count": 0,
+        "error_message": "",
+        "human_feedback": "",
+        "override_database_id": "",
+        "notion_database_id": "",
+        "final_output": "",
+        "original_url": ""
+    }
+
+    # --- 3. 运行图 (.invoke) ---
+    try:
+        # 使用你代码里已经 compile 好的 app 变量
+        final_state = app.invoke(initial_state)
+        
+        # --- 4. 打印结果 ---
+        print("\n" + "="*50)
+        print("✅ Workflow Completed!")
+        print("="*50)
+        
+        # 这里打印 final_output 字符串，或者其他你想看的字段
+        print(f"Result: {final_state.get('final_output')}")
+        
+        if final_state.get("published_page_id"):
+             print(f"🎉 Page ID: {final_state.get('published_page_id')}")
+             print(f"🔗 Title: {final_state.get('published_title')}")
+
+    except Exception as e:
+        print(f"\n❌ Graph Execution Error: {e}")
+        # 打印详细错误堆栈以便调试
+        import traceback
+        traceback.print_exc()

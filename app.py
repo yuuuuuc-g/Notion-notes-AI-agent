@@ -17,7 +17,7 @@ except ImportError:
 import streamlit as st
 
 # 导入 LangGraph
-from graph_agent import app_graph, KnowledgeDomain
+from workflow import app_graph, KnowledgeDomain
 # 🌟 导入文件处理工具
 try:
     from file_ops import read_pdf_content
