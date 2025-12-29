@@ -1,5 +1,4 @@
 import json
-import re
 from llm_client import get_completion, get_reasoning_completion
 import notion_ops
 import vector_ops
@@ -20,7 +19,7 @@ def safe_json_parse(input_data, context=""):
         return input_data
     try:
         text = str(input_data).strip()
-        # 清洗可能存在的 Markdown 代码块标记
+        # Clean potential markdown code blocks
         clean = text.replace("```json", "").replace("```", "")
         start = clean.find("{")
         end = clean.rfind("}") + 1
@@ -38,125 +37,164 @@ def safe_json_parse(input_data, context=""):
 class ResearcherAgent:
     def __init__(self):
         print("🕵️‍♂️ Researcher Agent initialized.")
+        
+    def merge_content(self, old_text: str, new_input: str) -> dict:
+        """
+        合并旧笔记内容和新输入内容
+        
+        参数:
+            old_text: 现有笔记的文本内容
+            new_input: 新的输入内容
+        
+        返回:
+            dict: 合并后的草稿，包含 title, summary, markdown_body, tags
+        """
+        print("⚗️ Researcher merging content...")
+        prompt = f"""
+        Act as a Knowledge Editor. 
+        Task: Merge the NEW INPUT into the EXISTING NOTE.
+        
+        EXISTING NOTE:
+        {old_text[:5000]}
+        
+        NEW INPUT:
+        {new_input[:5000]}
+        
+        Output JSON (Markdown):
+        {{
+            "title": "Combined Title",
+            "summary": "Summary of changes",
+            "markdown_body": "# Title\\n\\nMerged content...",
+            "tags": ["tag1", "tag2"]
+        }}
+        """
+        res, _ = get_reasoning_completion(prompt)
+        return safe_json_parse(res, "Merge Draft")
 
-    def perceive(self, user_input=None, uploaded_file=None):
-        if uploaded_file:
-            if not read_pdf_content:
-                raise RuntimeError("PDF support missing")
-            print("📂 Reading PDF...")
-            return read_pdf_content(uploaded_file), None
-
-        if user_input:
-            return user_input, None
-
-        return None, None
-
-    def analyze_intent(self, text):
+    def analyze_intent(self, text: str) -> dict:
         if text.strip().startswith("❌ Error"):
             print("🛑 Error detected in content, skipping analysis.")
-            return {"type": "Error", "error": text}
+            return {"intent": "Error", "category": "Error"}
 
         prompt = f"""
-        Analyze content type. First 800 chars:
-        {text[:800]}
+        Analyze the user input to determine the INTENT and CATEGORY.
 
-        Return JSON:
-        {{ "type": "Spanish" | "Tech" | "Humanities" }}
+        Input Preview: {text[:800]}
+
+        DEFINITIONS:
+        1. **intent**:
+           - "save_note": The user wants to save, record, summarize, extract, or write down information.
+           - "query_knowledge": The user is asking a question or looking for specific information.
+
+        2. **category**:
+           - "Spanish" (Language learning)
+           - "Tech" (Programming, AI, Engineering)
+           - "Humanities" (History, Economics, Philosophy, General)
+
+        RETURN STRICT JSON:
+        {{
+            "intent": "save_note" | "query_knowledge",
+            "category": "Spanish" | "Tech" | "Humanities"
+        }}
         """
         res = get_completion(prompt)
-        return safe_json_parse(res, "Intent") or {"type": "Humanities"}
+        
+        parsed = safe_json_parse(res, "Intent Analysis")
+        if not parsed:
+            return {"intent": "save_note", "category": "Humanities"}
+        
+        # Compatibility fix
+        if "type" in parsed and "category" not in parsed:
+            parsed["category"] = parsed["type"]
+            
+        return parsed
 
-    def consult_memory(self, text, domain=None):
-        print(f"🧠 Memory search (domain={domain})")
-        return vector_ops.search_memory(text[:1000], category_filter=domain)
+    def consult_memory(self, text: str, domain: str = None) -> dict:
+        """
+        从向量数据库中查询相关记忆
+        
+        参数:
+            text: 查询文本
+            domain: 领域过滤器，None 或 "All" 表示搜索所有领域
+        
+        返回:
+            dict: 查询结果，包含 match、page_id、title 等字段
+        """
+        category_filter = None if domain == "All" else domain
+        print(f"🧠 Memory search (Filter: {category_filter})...")
+        return vector_ops.search_memory(text[:1000], category_filter=category_filter)
 
-    
-    def draft_content(self, text, intent_type, error_context=""):
+    def merge_content(self, old_text: str, new_input: str) -> dict:
+        """
+        根据文本内容生成结构化草稿
+        
+        参数:
+            text: 原始文本内容
+            category: 内容分类，可选值 "Spanish" | "Tech" | "Humanities"（默认为 "Humanities"）
+            error_context: 错误上下文，用于重试时提供之前的错误信息
+        
+        返回:
+            dict: 包含 title, summary, markdown_body, tags 等字段的草稿字典
+        """
         if text.strip().startswith("❌ Error"):
             return {
                 "title": "⚠️ Content Fetch Failed",
-                "summary": "Unable to retrieve content from the provided source.",
-                "markdown_body": f"# Error Details\n\nThe system encountered an error while processing your request:\n\n> {text}\n\nPlease check the input and try again.",
+                "summary": "Unable to retrieve content.",
+                "markdown_body": f"# Error Details\n\n> {text}",
                 "category": "Error",
                 "tags": ["Error"]
             }
 
         current_error = error_context
         
-        # === 循环重试逻辑 (Max 3次) ===
         for attempt in range(3):
             print(f"🔄 Draft Generation Attempt {attempt + 1}/3...")
             
             err_msg_block = ""
             if current_error:
-                err_msg_block = (
-                    f"\n\n--- PREVIOUS ERROR ---\n"
-                    f"Your previous attempt failed with the following error:\n{current_error}\n"
-                    f"Please FIX the JSON format and content based on this error.\n"
-                    f"----------------------\n"
-                )
+                err_msg_block = f"\n\n--- PREVIOUS ERROR ---\n{current_error}\n----------------------\n"
 
-            # ---------- 1. 根据 intent_type 构建 Prompt ----------
-            if intent_type == "Spanish":
+            if category == "Spanish":
                 prompt = f"""
                 You are a Spanish teacher.
                 {err_msg_block}
                 Input: {text[:20000]}
                 
                 Analyze the content and Output STRICT JSON.
-                
-                LANGUAGE REQUIREMENT:
-                - **MUST USE SIMPLIFIED CHINESE (简体中文)** for all explanations, titles, and summaries.
-                
-                OUTPUT REQUIREMENTS:
-                1. "markdown_body" MUST be a string containing the full article content in Markdown format.
-                2. Use H1 (#), H2 (##), bullet points (-), and bold (**) for formatting.
+                LANGUAGE: SIMPLIFIED CHINESE.
+                FORMAT: Markdown.
                 
                 JSON SCHEMA:
                 {{
                     "title": "string",
                     "category": "Grammar | Vocabulary | Culture",
                     "summary": "string",
-                    "markdown_body": "# 标题\\n这里是正文...\\n- 列表项",
+                    "markdown_body": "# Title\\nContent...",
                     "tags": ["string"]
                 }}
                 """
                 tag = "Spanish Draft"
-                
-            else: # General / Tech / Humanities
+            else: 
                 prompt = f"""
                 You are a professional research editor.
                 {err_msg_block}
+                Input: {text[:20000]}
 
-                Analyze the following content and output STRICT JSON.
+                Analyze and output STRICT JSON.
+                LANGUAGE: SIMPLIFIED CHINESE.
                 
-                LANGUAGE REQUIREMENT:
-                - **MUST USE SIMPLIFIED CHINESE (简体中文)** for title, summary, and analysis.
-
-                Input Content:
-                {text[:20000]}
-
-                OUTPUT REQUIREMENTS (VERY IMPORTANT):
-                1. Output MUST be valid JSON.
-                2. Use "markdown_body" to write the FULL article.
-                3. Do NOT use "blocks" list anymore.
-                4. Use standard Markdown syntax (#, ##, -, >, **) in "markdown_body".
-
                 JSON SCHEMA:
                 {{
                   "title": "string",
                   "summary": "string",
-                  "markdown_body": "# 章节一\\n这里是详细的正文内容...\\n## 子标题\\n- 要点1\\n- 要点2",
+                  "markdown_body": "# Title\\nContent...",
                   "tags": ["string"],
                   "category": "string"
                 }}
                 """
                 tag = "General Draft"
 
-            # ---------- 2. 请求 LLM ----------
             content, _ = get_reasoning_completion(prompt)
-            
-            # ---------- 3. 解析与校验 ----------
             draft = safe_json_parse(content, tag)
             
             if draft and isinstance(draft, dict) and draft.get("markdown_body"):
@@ -170,19 +208,14 @@ class ResearcherAgent:
                 print(f"✅ Attempt {attempt + 1} Success.")
                 return draft
             
-            # ---------- 4. 失败处理 ----------
-            print(f"⚠️ Attempt {attempt + 1} Failed. Parsing error or missing 'markdown_body'.")
-            current_error = (
-                f"JSON Parsing Failed. The output was not valid JSON or missing 'markdown_body' key.\n"
-                f"Your raw output start was: {content[:500]}..."
-            )
+            print(f"⚠️ Attempt {attempt + 1} Failed.")
+            current_error = f"JSON Parsing Failed. Raw output start: {content[:500]}..."
 
-        # === 5. 兜底 ===
-        print("❌ All 3 attempts failed. Using fallback.")
+        print("❌ All attempts failed.")
         return {
             "title": "Untitled (Parse Error)",
-            "summary": "Automatic parsing failed after 3 attempts.",
-            "markdown_body": f"# Original Content\n\n{text[:3000]}\n\n> Note: AI generation failed.",
+            "summary": "Parsing failed.",
+            "markdown_body": f"# Original Content\n\n{text[:3000]}",
             "tags": ["Error"],
             "category": "Uncategorized"
         }
@@ -205,18 +238,29 @@ class EditorAgent:
         domain: str = None,
         database_id: str = None,
     ) -> dict:
+        """
+        将草稿发布到 Notion
+        
+        参数:
+            draft: 草稿字典，包含 title, summary, markdown_body, tags
+            intent_type: 意图类型（目前未在逻辑中使用）
+            memory_match: 记忆匹配结果（在新流程中通常为 None，合并逻辑在 workflow 中处理）
+            raw_text: 原始文本
+            original_url: 原始 URL（可选）
+            domain: 领域名称（用于选择数据库，如果未提供 database_id）
+            database_id: 目标数据库 ID（优先使用）
+        
+        返回:
+            dict: 包含 success, page_id, title, target_db_id 的字典
+        """
         if not draft:
-            return {"success": False, "page_id": None, "title": None, "target_db_id": None}
+            return {"success": False, "page_id": None}
 
         title = draft.get("title", "Untitled")
-        
-        blocks = draft.get("blocks", [])
-        markdown_body = draft.get("markdown_body")
+        markdown_body = draft.get("markdown_body") or raw_text[:3000]
+        draft["markdown_body"] = markdown_body
 
-        if not markdown_body and not blocks:
-            draft["markdown_body"] = raw_text[:3000]
-
-        # 1️⃣ Resolve database
+        # 确定目标数据库（优先使用 database_id，否则根据 domain 选择）
         if database_id:
             target_db = database_id
         elif domain == "spanish_learning":
@@ -226,37 +270,32 @@ class EditorAgent:
         else:
             target_db = notion_ops.DB_HUMANITIES_ID
 
-        # 2️⃣ Merge Logic (读取 -> 融合 -> 重写)
+        # 注意：新流程中合并逻辑在 workflow.py 的 node_draft_merge 中处理
+        # 这里只处理新建页面的情况
+        # （保留 merge 逻辑作为向后兼容，但在新流程中 memory_match 通常为 None）
         page_id = None
-        
-        if memory_match.get("match"):
+        if memory_match and memory_match.get("match") and intent_type != "query_knowledge":
             existing_id = memory_match.get("page_id")
-            print(f"🔗 Found related page ({existing_id}). Starting Merge Process...")
+            print(f"🔗 Found related page ({existing_id}). Starting Merge...")
             
             try:
-                # A. 读取旧笔记 (依赖 notion_ops.get_page_text)
                 old_text = notion_ops.get_page_text(existing_id)
-                
                 if old_text:
-                    # B. 调用内部融合函数
                     merged_draft = self._internal_merge(old_text, draft, intent_type)
-                    
                     if merged_draft and merged_draft.get("markdown_body"):
-                        # C. 重写 Notion 页面 (依赖 notion_ops.overwrite_page_content)
                         success = notion_ops.overwrite_page_content(existing_id, merged_draft)
                         if success:
                             page_id = existing_id
-                            print(f"✅ Successfully merged and updated page: {merged_draft.get('title')}")
-                
+                            print(f"✅ Merged: {merged_draft.get('title')}")
             except Exception as e:
-                print(f"⚠️ Merge failed ({e}), falling back to create new page.")
+                print(f"⚠️ Merge failed ({e}), creating new page.")
 
-        # 3️⃣ Create (如果 Merge 没发生或失败)
+        # 创建新页面
         if not page_id:
             page_id = notion_ops.create_general_note(draft, target_db, original_url)
 
         if not page_id:
-            return {"success": False, "page_id": None, "title": None, "target_db_id": target_db}
+            return {"success": False}
 
         return {
             "success": True,
@@ -265,36 +304,32 @@ class EditorAgent:
             "target_db_id": target_db,
         }
         
-    def _internal_merge(self, old_text, new_draft, intent_type):
+    def _internal_merge(self, old_text: str, new_draft: dict, intent_type: str) -> dict:
         """
-        Helper: 融合新旧文本
+        内部合并方法（由 publish 方法调用，用于向后兼容）
+        
+        参数:
+            old_text: 旧笔记文本
+            new_draft: 新草稿字典
+            intent_type: 意图类型（未使用但保留参数兼容性）
+        
+        返回:
+            dict: 合并后的草稿
         """
-        # 获取新草稿的 Markdown 文本
         new_text = new_draft.get("markdown_body", "") or str(new_draft)
-        
         prompt = f"""
-        Act as a Knowledge Manager. Merge the following two texts into one comprehensive Markdown article.
-        
-        GOAL: Create a single, unified article that contains the best information from both sources.
-        
-        REQUIREMENTS:
-        1. **Eliminate duplicates**: Do not repeat the same information.
-        2. **Logical Flow**: The merged text should read like one cohesive article, not two separate parts pasted together.
-        3. **Language**: SIMPLIFIED CHINESE (简体中文).
-        4. **Format**: Standard Markdown (H1, H2, bullets).
+        Act as a Knowledge Manager. Merge these texts into one article.
+        LANGUAGE: SIMPLIFIED CHINESE.
+        FORMAT: Markdown.
 
-        --- OLD TEXT (From Database) ---
+        --- OLD ---
         {old_text[:6000]}
         
-        --- NEW TEXT (Input) ---
+        --- NEW ---
         {new_text[:6000]}
         
-        OUTPUT JSON SCHEMA: 
-        {{ 
-            "title": "Merged Title", 
-            "summary": "Merged Summary", 
-            "markdown_body": "# Merged Title\\n...content..." 
-        }}
+        JSON SCHEMA: 
+        {{ "title": "str", "summary": "str", "markdown_body": "str" }}
         """
         res, _ = get_reasoning_completion(prompt)
         return safe_json_parse(res, "Merge")

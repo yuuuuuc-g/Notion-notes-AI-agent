@@ -1,79 +1,92 @@
 import sys
 import os
 import uuid
+import time
 from io import StringIO
-from dotenv import load_dotenv # 确保能读取 env
+from dotenv import load_dotenv
+import streamlit as st
 
-
-# 加载环境变量
+# Load Environment Variables
 load_dotenv()
 
+# Compatibility fix for some environments
 try:
     __import__('pysqlite3')
     sys.modules['sqlite3'] = sys.modules.pop('pysqlite3')
 except ImportError:
     pass
 
-import streamlit as st
-
-# 导入 LangGraph
+# Import Workflow
 from workflow import app_graph, KnowledgeDomain
-# 🌟 导入文件处理工具
+
+
+# Import File Ops
 try:
     from file_ops import read_pdf_content
 except ImportError:
     read_pdf_content = None
 
-# --- Page Configuration ---
+# ===========================
+#  Page Configuration
+# ===========================
 st.set_page_config(
-    page_title="InfoPrism",
+    page_title="InfoPrism Chat",
     page_icon="💠",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# --- CSS Styles ---
+# --- CSS: Keep the original Gradient Styling ---
 st.markdown("""
     <style>
-    button[kind="primary"], button[kind="primaryFormSubmit"] {
-        background: linear-gradient(90deg, #4facfe 0%, #00f2fe 100%) !important;
-        border: none !important;
-        color: white !important;
-        font-weight: bold !important;
+    /* Hide default top padding */
+    .block-container {
+        padding-top: 2rem;
     }
-    button[kind="primary"]:hover, button[kind="primaryFormSubmit"]:hover {
-        box-shadow: 0 4px 15px rgba(0, 242, 254, 0.4) !important;
+    /* Gradient Button Styling */
+    button[kind="primary"] {
+        background: linear-gradient(90deg, #4facfe 0%, #00f2fe 100%);
+        border: none;
+        color: white;
+        font-weight: bold;
+        transition: all 0.3s;
+    }
+    button[kind="primary"]:hover {
+        box-shadow: 0 4px 15px rgba(0, 242, 254, 0.4);
         transform: translateY(-2px);
+    }
+    /* Chat Bubble Styling */
+    .stChatMessage {
+        padding: 1rem;
+        border-radius: 10px;
+        margin-bottom: 0.5rem;
     }
     </style>
     """, unsafe_allow_html=True)
 
-# --- State Init ---
+# ===========================
+#  State Init
+# ===========================
+if "messages" not in st.session_state:
+    st.session_state["messages"] = [
+        {"role": "assistant", "content": "👋 **Hello! I'm InfoPrism, your AI Second Brain.**\n\nYou can **paste an article** to save it, or **ask a question** to query your knowledge base.\n\n*(PDF upload is available in the sidebar)*"}
+    ]
+
 if "thread_id" not in st.session_state:
-    st.session_state["thread_id"] = str(uuid.uuid4()) 
+    st.session_state["thread_id"] = str(uuid.uuid4())
 
 if "graph_state" not in st.session_state:
-    st.session_state["graph_state"] = "IDLE" 
+    st.session_state["graph_state"] = "IDLE"  # IDLE, RUNNING, PAUSED
 
-if "input_area" not in st.session_state: st.session_state["input_area"] = ""
-if "uploader_key_id" not in st.session_state: st.session_state["uploader_key_id"] = 0
-
-# --- Helper: Hard Reset ---
-def reset_pipeline():
-    """彻底重置所有状态，为新任务做准备"""
-    st.session_state["graph_state"] = "IDLE"
-    st.session_state["thread_id"] = str(uuid.uuid4()) # 🟢 关键：生成新 ID，隔离记忆
-    st.session_state["uploader_key_id"] += 1
-    # 清空可能残留的 session 数据
-    for key in ["input_area"]:
-        if key in st.session_state:
-            del st.session_state[key]
+if "uploader_key" not in st.session_state:
+    st.session_state["uploader_key"] = 0
 
 # ===========================
-#  Sidebar
+#  Sidebar (Config & Upload)
 # ===========================
 with st.sidebar:
-    st.markdown("""
+    st.markdown(
+        """
         <h1 style='text-align: left; font-family: sans-serif; font-weight: 800; margin-bottom: 5px;'>
             <span style='font-size: 32px;'>💠</span>
             <span style='font-size: 30px; background: linear-gradient(to right, #4facfe 0%, #00f2fe 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent;'>
@@ -83,173 +96,195 @@ with st.sidebar:
         <p style='font-size: 16px; color: #666; margin-bottom: 20px;'>
             Your Personal AI Second Brain
         </p>
-        """, unsafe_allow_html=True)
-
-    col1, col2 = st.columns([4, 1])
-    with col1: st.markdown("**📥 Input Zone**")
-    with col2: st.button("🗑️", on_click=reset_pipeline, help="Clear all inputs")
+        """, unsafe_allow_html=True
+    )
+    st.caption("Knowledge Graph Agent")
     
-    with st.form(key="input_form"):
-        with st.container(border=True):
-            dynamic_key = f"file_uploader_{st.session_state['uploader_key_id']}"
-            uploaded_file = st.file_uploader("📎 Upload PDF", type=["pdf"], key=dynamic_key)
-            user_input = st.text_area("Paste article content here (No URLs):", height=150, key="input_area")
-        
-        submit_btn = st.form_submit_button("🚀 Start Processing", type="primary", use_container_width=True, disabled=(st.session_state["graph_state"] != "IDLE"))
-
-# ===========================
-#  Main Interface
-# ===========================
-
-# 🟢 配置 Config (每次都用当前的 thread_id)
-config = {"configurable": {"thread_id": st.session_state["thread_id"]}}
-
-if not submit_btn and st.session_state["graph_state"] == "IDLE":
-    if os.path.exists("banner.jpg"):
-        st.image("banner.jpg", width="stretch") 
-        st.markdown("""
-        <div style="text-align: center; color: #666; font-size: 16px; margin-top: 5px;">
-        让知识有机生长
-        </div>
-        """, unsafe_allow_html=True)
-
-# 1. 启动逻辑
-if submit_btn and st.session_state["graph_state"] == "IDLE":
-    if not user_input and not uploaded_file:
-        st.warning("⚠️ Please provide input!")
-    else:
-        # 🟢 核心修复 1：每次点击开始，强制生成新线程 ID，防止读取旧缓存
+    st.divider()
+    
+    # File Uploader
+    st.markdown("### 📎 Attachments")
+    uploaded_file = st.file_uploader(
+        "Upload PDF (Context for current chat)", 
+        type=["pdf"], 
+        key=f"uploader_{st.session_state['uploader_key']}"
+    )
+    
+    st.divider()
+    
+    # Reset Button
+    if st.button("🗑️ Clear Chat & Reset", use_container_width=True):
+        # Keep the welcome message
+        st.session_state["messages"] = [st.session_state["messages"][0]] 
         st.session_state["thread_id"] = str(uuid.uuid4())
+        st.session_state["graph_state"] = "IDLE"
+        st.session_state["uploader_key"] += 1
+        st.rerun()
+
+# ===========================
+#  Chat Interface Logic
+# ===========================
+
+# 1. Display Chat History
+for msg in st.session_state["messages"]:
+    with st.chat_message(msg["role"]):
+        st.markdown(msg["content"])
+
+# 2. Handle Graph PAUSED State (Review Card)
+# This card appears below history when the graph pauses for human review
+if st.session_state["graph_state"] == "PAUSED":
+    config = {"configurable": {"thread_id": st.session_state["thread_id"]}}
+    snapshot = app_graph.get_state(config)
+    
+    # Get Draft Data
+    current_draft = snapshot.values.get("draft", {})
+    raw_domain = snapshot.values.get("knowledge_domain", "tech_knowledge")
+    current_domain_val = raw_domain.value if hasattr(raw_domain, 'value') else str(raw_domain)
+
+    # Display Review Card in Assistant Stream
+    with st.chat_message("assistant"):
+        st.info("✋ **Draft generated. Please review before publishing:**")
+        
+        with st.container(border=True):
+            col1, col2 = st.columns([2, 1])
+            
+            with col1:
+                new_title = st.text_input("Title", value=current_draft.get("title", ""))
+                new_summary = st.text_area("Summary", value=current_draft.get("summary", ""), height=100)
+                with st.expander("📄 Preview Markdown Content"):
+                    st.markdown(current_draft.get("markdown_body", ""))
+            
+            with col2:
+                domain_options = ["tech_knowledge", "humanities", "spanish_learning"]
+                try: default_idx = domain_options.index(current_domain_val)
+                except: default_idx = 0
+                
+                selected_db = st.selectbox(
+                    "Target Database", 
+                    options=domain_options, 
+                    index=default_idx,
+                    format_func=lambda x: x.replace("_", " ").title()
+                )
+                st.caption(f"Detected Intent: {snapshot.values.get('intent_type', 'Unknown')}")
+
+            btn_col1, btn_col2 = st.columns(2)
+            
+            # --- Approve Button ---
+            if btn_col1.button("✅ Confirm & Publish", type="primary", use_container_width=True):
+                # 1. Update State
+                current_draft["title"] = new_title
+                current_draft["summary"] = new_summary
+                
+                db_id_map = {
+                    "tech_knowledge": os.environ.get("NOTION_DATABASE_ID_TECH"),
+                    "humanities": os.environ.get("NOTION_DATABASE_ID_HUMANITIES"),
+                    "spanish_learning": os.environ.get("NOTION_DATABASE_ID") 
+                }
+                
+                app_graph.update_state(
+                    config, 
+                    {
+                        "draft": current_draft, 
+                        "knowledge_domain": selected_db, 
+                        "override_database_id": db_id_map.get(selected_db)
+                    }
+                )
+                
+                # 2. Resume Graph Execution
+                with st.status("🚀 Writing to Notion...", expanded=True) as status:
+                    final_output = None
+                    for event in app_graph.stream(None, config, stream_mode="values"):
+                        if "final_output" in event:
+                            final_output = event["final_output"]
+                    status.update(label="✅ Published successfully!", state="complete", expanded=False)
+                
+                # 3. Append Success Message
+                success_msg = f"✅ **Note Published!**\n\n📄 **{new_title}**\n📚 Database: `{selected_db}`\n\n{final_output}"
+                st.session_state["messages"].append({"role": "assistant", "content": success_msg})
+                
+                # 4. Reset State
+                st.session_state["graph_state"] = "IDLE"
+                st.session_state["thread_id"] = str(uuid.uuid4()) # New thread for next turn
+                st.rerun()
+
+            # --- Reject Button ---
+            if btn_col2.button("❌ Reject / Cancel", use_container_width=True):
+                st.session_state["messages"].append({"role": "assistant", "content": "🚫 Operation cancelled."})
+                st.session_state["graph_state"] = "IDLE"
+                st.session_state["thread_id"] = str(uuid.uuid4())
+                st.rerun()
+
+# 3. Handle User Input (Chat Input)
+# Only allow input when IDLE to prevent interruption during review
+if st.session_state["graph_state"] == "IDLE":
+    if prompt := st.chat_input("Type a message or ask a question..."):
+        
+        # A. Display User Message
+        st.session_state["messages"].append({"role": "user", "content": prompt})
+        with st.chat_message("user"):
+            st.markdown(prompt)
+            if uploaded_file:
+                st.caption(f"📎 Attached: {uploaded_file.name}")
+
+        # B. Run Graph
         config = {"configurable": {"thread_id": st.session_state["thread_id"]}}
         
-        st.session_state["graph_state"] = "RUNNING"
-        
-        with st.status("🌌 Navigating the cosmos of knowledge...", expanded=True) as status:
-            old_stdout = sys.stdout
-            result_buffer = StringIO()
-            log_placeholder = st.empty()
-            
-            class StreamlitLogger:
-                def write(self, msg):
-                    if msg.strip():
-                        result_buffer.write(msg + "\n")
-                        log_placeholder.markdown(f"```text\n{result_buffer.getvalue()}\n```")
-                def flush(self): pass
-            sys.stdout = StreamlitLogger()
+        with st.chat_message("assistant"):
+            status_container = st.status("🤖 Thinking...", expanded=True)
             
             try:
-                pre_processed_text = ""
-                original_source = None
+                # Prepare Input
+                raw_text = prompt
+                if uploaded_file and read_pdf_content:
+                    status_container.write("📂 Parsing PDF...")
+                    pdf_text = read_pdf_content(uploaded_file)
+                    raw_text = f"User Query: {prompt}\n\nPDF Content:\n{pdf_text}"
                 
-                if uploaded_file:
-                    st.write("📂 Reading PDF file...")
-                    if read_pdf_content:
-                        pre_processed_text = read_pdf_content(uploaded_file)
-                        original_source = uploaded_file.name
-                    else:
-                        raise Exception("file_ops module missing.")
-                
-                elif user_input:
-                    # 🟢 修改点：不再检查 http，直接把输入当成正文
-                    st.write("📝 Processing pasted text...")
-                    pre_processed_text = user_input
-                    original_source = "User Pasted Text"
-
-                # 构造初始状态
                 initial_state = {
-                    "raw_text": pre_processed_text,
-                    "original_url": None, # URL 来源彻底置空
+                    "user_input": prompt,
+                    "raw_text": raw_text,
+                    "original_url": None,
                     "retry_count": 0
                 }
-                
-                # Stream Graph
-                for event in app_graph.stream(initial_state, config, stream_mode="values"):
-                    if "intent_type" in event:
-                        st.write(f"👉 Intent Detected: **{event['intent_type']}**")
-                    if "memory_match" in event and event['memory_match'].get('match'):
-                        st.write(f"💡 Memory Hit: *{event['memory_match'].get('title')}*")
 
-                # Check Snapshot for Pause
+                # Stream Graph
+                final_output = None
+                intent_detected = None
+                
+                for event in app_graph.stream(initial_state, config, stream_mode="values"):
+                    if "intent_type" in event and event["intent_type"]:
+                        intent_detected = event["intent_type"]
+                        if intent_detected == "query_knowledge":
+                            status_container.write("🔍 Intent: **Query Knowledge Base**")
+                        elif intent_detected == "save_note":
+                            status_container.write("✍️ Intent: **Drafting Note**")
+                    
+                    if "memory_match" in event and event['memory_match'].get('match'):
+                        status_container.write(f"🧠 Memory Recall: Found related note '{event['memory_match'].get('title')}'")
+                    
+                    if "final_output" in event:
+                        final_output = event["final_output"]
+
+                # C. Check Results
                 snapshot = app_graph.get_state(config)
-                if snapshot.next and snapshot.next[0] == "human_review":
-                    status.update(label="🟠 Paused for Human Review", state="running", expanded=False)
+                
+                # Case 1: Paused (Requires Human Review)
+                if snapshot.next and snapshot.next[0] == "publisher":
+                    status_container.update(label="🟠 Human Review Required", state="running", expanded=False)
                     st.session_state["graph_state"] = "PAUSED"
-                    st.rerun()
+                    st.rerun() 
+                
+                # Case 2: Completed (Query Result)
+                elif final_output:
+                    status_container.update(label="✅ Completed", state="complete", expanded=False)
+                    st.markdown(final_output) # Display result in current bubble
+                    st.session_state["messages"].append({"role": "assistant", "content": final_output})
+                
+                # Case 3: Error/Empty
+                else:
+                    status_container.update(label="❌ No Output", state="error")
+                    st.error("Graph finished without output.")
 
             except Exception as e:
-                status.update(label="❌ Mission Failed", state="error")
-                st.error(f"Runtime Error: {str(e)}")
-            finally:
-                sys.stdout = old_stdout
-
-# 2. 审核界面
-if st.session_state["graph_state"] == "PAUSED":
-    st.info("✋ **Human-in-the-loop**: Please review the draft.")
-    snapshot = app_graph.get_state(config)
-    current_draft = snapshot.values.get("draft", {})
-    current_domain = snapshot.values.get("knowledge_domain", "tech_knowledge")
-    
-    with st.container(border=True):
-        st.subheader("📝 Draft Preview")
-        new_title = st.text_input("Title", value=current_draft.get("title", ""))
-        new_summary = st.text_area("Summary", value=current_draft.get("summary", ""), height=100)
-        
-        # 🟢 数据库选项映射
-        domain_options = [d.value for d in KnowledgeDomain]
-        
-        # 获取当前默认值
-        try:
-            current_val = current_domain.value if hasattr(current_domain, 'value') else current_domain
-            default_index = domain_options.index(current_val)
-        except: 
-            default_index = 0
-            
-        selected_db_name = st.selectbox(
-            "📚 Target Database", 
-            options=domain_options, 
-            index=default_index, 
-            format_func=lambda x: x.replace("_", " ").title()
-        )
-        
-        with st.expander("View JSON Blocks"): st.json(current_draft)
-            
-        col1, col2 = st.columns([1, 1])
-        if col1.button("✅ Approve & Publish", type="primary", use_container_width=True):
-            current_draft["title"] = new_title
-            current_draft["summary"] = new_summary
-            
-            # 🟢 核心修复 2：将 UI 选择映射为真实 Database ID
-            db_id_map = {
-                "tech_knowledge": os.environ.get("NOTION_DATABASE_ID_TECH"),
-                "humanities": os.environ.get("NOTION_DATABASE_ID_HUMANITIES"),
-                "spanish_learning": os.environ.get("NOTION_DATABASE_ID") # 假设西班牙语是默认ID
-            }
-            target_db_id = db_id_map.get(selected_db_name)
-
-            # 更新状态，并显式传入 override_database_id
-            app_graph.update_state(
-                config, 
-                {
-                    "draft": current_draft, 
-                    "knowledge_domain": KnowledgeDomain(selected_db_name),
-                    "override_database_id": target_db_id  # 👈 这里必须传 ID，不能是 None
-                }
-            )
-            
-            with st.status("🚀 Publishing...", expanded=True) as status:
-                for event in app_graph.stream(None, config, stream_mode="values"):
-                     if "final_output" in event: st.write(event["final_output"])
-                status.update(label="✅ Workflow Completed!", state="complete", expanded=False)
-                st.session_state["graph_state"] = "COMPLETED"
-                st.balloons()
-                st.success(f"🎉 Saved to Notion! (DB: {selected_db_name})")
-                
-        if col2.button("❌ Reject & Reset", use_container_width=True):
-            reset_pipeline()
-            st.rerun()
-
-# 3. 完成状态
-if st.session_state["graph_state"] == "COMPLETED":
-    if st.button("Start New Task", type="primary"):
-        reset_pipeline()
-        st.rerun()
+                status_container.update(label="❌ Execution Error", state="error")
+                st.error(f"Error: {e}")

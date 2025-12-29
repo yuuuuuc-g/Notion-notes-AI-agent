@@ -1,5 +1,4 @@
 import os
-import re
 import requests
 from notion_client import Client
 from dotenv import load_dotenv
@@ -410,14 +409,25 @@ def get_page_structure(page_id):
 
 # --- 核心操作 ---
 
-def create_general_note(data, target_db_id, original_url=None):
+def create_general_note(data: dict, target_db_id: str, original_url: str = None) -> str:
+    """
+    在指定的 Notion 数据库中创建通用笔记
+    
+    参数:
+        data: 笔记数据字典，包含 title, summary, markdown_body 或 blocks, tags
+        target_db_id: 目标数据库 ID
+        original_url: 原始 URL（可选）
+    
+    返回:
+        str: 创建的页面 ID，失败返回 None
+    """
     title = data.get('title', 'Unnamed')
     clean_title = clean_text(title)
     summary = data.get('summary')
     
     print(f"✍️ Creating General Note: {clean_title}...")
     
-    # 🔥 核心修改：优先检查是否使用了 Markdown 格式
+    # 优先检查是否使用了 Markdown 格式
     if 'markdown_body' in data and data['markdown_body']:
         print("📝 Detected Markdown content. Converting...")
         # 1. 先生成 Markdown 转换后的 Blocks
@@ -436,7 +446,7 @@ def create_general_note(data, target_db_id, original_url=None):
         children.extend(content_blocks)
         
     else:
-        # 🔄 回退逻辑：如果没有 Markdown，还是用老办法 (build_content_blocks)
+        # 回退逻辑：如果没有 Markdown，使用旧格式 (build_content_blocks)
         blocks = data.get('blocks') or data.get('key_points', []) 
         children = build_content_blocks(summary, blocks)
 
@@ -465,11 +475,18 @@ def create_general_note(data, target_db_id, original_url=None):
         return None
 
 
-def append_to_page(page_id, data, restore_mode=False):
+def append_to_page(page_id: str, data: dict, restore_mode: bool = False) -> bool:
     """
-    ✅ 终极版追加函数 (v2.0)
-    :param restore_mode: 如果为 True，表示这是“覆盖重写”操作。
-                         此时不加分割线和 Update 标题，而是恢复 Summary Callout。
+    向页面追加内容或覆盖重写内容
+    
+    参数:
+        page_id: Notion 页面 ID
+        data: 内容数据字典，包含 title, summary, markdown_body 或 blocks
+        restore_mode: 如果为 True，表示覆盖重写操作（不加分割线和 Update 标题）
+                     如果为 False，表示追加操作（添加分割线和 Update 标题）
+    
+    返回:
+        bool: 成功返回 True，失败返回 False
     """
     print(f"➕ Appending content to page {page_id} (Restore Mode: {restore_mode})...")
     
@@ -558,9 +575,16 @@ def add_row_to_table(table_id, row_data):
         return False
     
 
-def get_page_text(page_id):
+def get_page_text(page_id: str) -> str:
     """
     读取 Notion 页面内容，转换为纯文本，供 LLM 参考
+    
+    参数:
+        page_id: Notion 页面 ID
+    
+    返回:
+        str: 页面的纯文本内容（失败返回空字符串）
+    
     注意：为了节省 Token，这里只读取文本类 Block，忽略图片/表格的复杂结构
     """
     print(f"📖 Reading content from page {page_id}...")
@@ -590,11 +614,16 @@ def get_page_text(page_id):
         print(f"❌ Failed to read page: {e}")
         return ""
 
-# notion_ops.py
-
-def overwrite_page_content(page_id, draft_data):
+def overwrite_page_content(page_id: str, draft_data: dict) -> bool:
     """
-    🔥 危险操作：清空页面当前内容，并写入融合后的新内容
+    覆盖页面内容：清空页面当前内容，并写入融合后的新内容
+    
+    参数:
+        page_id: Notion 页面 ID
+        draft_data: 草稿数据字典，包含 title, summary, markdown_body 等
+    
+    返回:
+        bool: 成功返回 True，失败返回 False
     """
     print(f"♻️ Overwriting page {page_id} with merged content...")
     
