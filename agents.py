@@ -124,7 +124,7 @@ class ResearcherAgent:
         print(f"🧠 Memory search (Filter: {category_filter})...")
         return vector_ops.search_memory(text[:1000], category_filter=category_filter)
 
-    def merge_content(self, old_text: str, new_input: str) -> dict:
+    def draft_content(self, text: str, category: str = "Humanities", error_context: str = "") -> dict:
         """
         根据文本内容生成结构化草稿
         
