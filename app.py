@@ -103,7 +103,23 @@ with st.sidebar:
     st.divider()
     
     # File Uploader
-    st.markdown("### 📎 Attachments")
+    st.markdown("### ⚙️ Operation Mode")
+    # 1. 添加模式选择器
+    # 默认是 "Auto (AI Detect)"，但在需要精准控制时手动切换
+    mode_selection = st.radio(
+    "Current Mode:",
+    options=["Auto (AI Detect)", "✍️ Write / Save", "🔍 Search / Ask"],
+    index=0,
+    help="强制指定 AI 的行为模式，避免误判。"
+    )
+    # 映射选择到内部状态代码
+    MODE_MAP = {
+    "Auto (AI Detect)": "auto",
+    "✍️ Write / Save": "save_note",
+    "🔍 Search / Ask": "query_knowledge"
+    }
+    selected_mode_code = MODE_MAP[mode_selection]
+    
     uploaded_file = st.file_uploader(
         "Upload PDF (Context for current chat)", 
         type=["pdf"], 
@@ -241,10 +257,12 @@ if st.session_state["graph_state"] == "IDLE":
                     raw_text = f"User Query: {prompt}\n\nPDF Content:\n{pdf_text}"
                 
                 initial_state = {
-                    "user_input": prompt,
-                    "raw_text": raw_text,
-                    "original_url": None,
-                    "retry_count": 0
+                "user_input": prompt,
+                "raw_text": raw_text,
+                # 🔥 将用户强制指定的模式传给 Graph
+                "user_mode_override": selected_mode_code, 
+                "original_url": None,
+                "retry_count": 0
                 }
 
                 # Stream Graph

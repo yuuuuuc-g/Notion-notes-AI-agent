@@ -56,6 +56,7 @@ class AgentState(TypedDict, total=False):
     user_input: str
     raw_text: str
     original_url: str
+    user_mode_override: str
 
     # Core States
     analysis: AnalysisState
@@ -174,44 +175,74 @@ def node_analyzer(state: AgentState) -> AgentState:
     输出 intent_type (query_knowledge/save_note)、category (Spanish/Tech/Humanities) 和对应的 domain
     """
     print("🧠 [Analysis] Intent & Domain Detection")
-    # 定义 text 变量 (从 state 中提取)
-    text = state.get("raw_text", "")
-    if not text:
-        text = state.get("user_input", "") # 双重保险
-
-    result = researcher.analyze_intent(state["raw_text"])
-
-    # 兼容处理：确保字段存在
-    intent = result.get("intent", "save_note")
-    # 如果 analyze_intent 返回的是 "save_note" 或 "query_knowledge"，需要做一下映射
-    # 逻辑：如果输入很长（超过150字符），且不包含问号，
-    # 哪怕 LLM 觉得是 Query，大概率也是用户粘贴的笔记，强制转为 Save。
-    is_long_text = len(text) > 150
-    has_question_mark = "?" in text or "？" in text
     
-    if intent == "query_knowledge" and is_long_text and not has_question_mark:
-        print(f"⚠️ [Override] Input is long ({len(text)} chars) & no question mark. Forcing intent to 'save_note'.")
+    # 1. 获取输入
+    text = state.get("raw_text", "") or state.get("user_input", "")
+    override = state.get("user_mode_override", "auto")
+
+    # 2. 初始化默认值
+    intent = "save_note"
+    confidence = 1.0
+    category = "Humanities" 
+
+    # =================================================
+    # 🔥 核心逻辑：用户指令 > AI 猜测 > 规则
+    # =================================================
+
+    if override == "save_note":
+        print("🔒 [Override] User forced mode: SAVE/WRITE")
         intent = "save_note"
+        # 仅调用 AI 识别分类，不改变意图
+        ai_result = researcher.analyze_intent(text) 
+        category = ai_result.get("category", "Humanities")
+
+    elif override == "query_knowledge":
+        print("🔒 [Override] User forced mode: SEARCH/QUERY")
+        intent = "query_knowledge"
+        # 仅调用 AI 识别分类，不改变意图
+        ai_result = researcher.analyze_intent(text)
+        category = ai_result.get("category", "Humanities")
+
+    else:
+        # override == "auto" -> 走原来的 AI 分析流程
+        print("🤖 [Auto] AI Analyzing intent...")
+        ai_result = researcher.analyze_intent(text) # 统一变量名为 ai_result
+        
+        intent = ai_result.get("intent", "save_note")
+        category = ai_result.get("category", "Humanities")
+        confidence = ai_result.get("confidence", 0.7)
+        
+        # 🔥🔥🔥 修复点：启发式规则只在 Auto 模式下生效！🔥🔥🔥
+        is_long_text = len(text) > 150
+        has_question_mark = "?" in text or "？" in text
+        
+        # 规则：如果 AI 觉得是查询，但文本很长且没问号 -> 强制改为笔记
+        if intent == "query_knowledge" and is_long_text and not has_question_mark:
+            print(f"⚠️ [Auto Rule] Input is long ({len(text)}) & no '?', forcing 'save_note'.")
+            intent = "save_note"
+
+    # =================================================
+    # 3. 统一路由与领域映射
+    # =================================================
+    
     if "query" in intent:
         routing = "query"
     else:
         routing = "save"
         
-    category = result.get("category", "Humanities")
+    # 确保 INTENT_TO_DOMAIN 可访问
     domain = INTENT_TO_DOMAIN.get(category, KnowledgeDomain.HUMANITIES)
 
-    print(f"   -> Intent: {intent}, Category: {category}, Domain: {domain.value}")
+    print(f"   -> Final Intent: {intent}, Category: {category}, Domain: {domain.value}")
 
     return {
         "analysis": {
             "intent_type": intent,
-            "category": category,  # 保存原始分类，供 draft_content 使用
             "domain": domain,
             "routing": routing,
-            "confidence": result.get("confidence", 0.7),
+            "confidence": confidence,
         }
     }
-
 
 def node_query_memory(state: AgentState) -> AgentState:
     """
