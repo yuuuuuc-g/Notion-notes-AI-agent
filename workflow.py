@@ -144,10 +144,23 @@ def node_perceiver(state: AgentState) -> AgentState:
     这是工作流的入口节点，负责数据清洗和标准化
     """
     print("🔵 [Graph] Perceiver...")
-    raw_text = (state.get("raw_text") or state.get("user_input") or "").strip()
+    
+    # 尝试从多个可能的位置获取输入文本
+    raw_text = state.get("raw_text") or state.get("user_input") or ""
+    
+    # 确保 raw_text 是字符串类型
+    if raw_text is None:
+        raw_text = ""
+    else:
+        raw_text = str(raw_text).strip()
 
     if not raw_text:
-        raise ValueError("Perceiver requires pre-processed raw_text")
+        # 提供更详细的错误信息，帮助调试
+        available_keys = list(state.keys()) if state else []
+        raise ValueError(
+            f"Perceiver requires 'raw_text' or 'user_input' in state, "
+            f"but got empty values. Available state keys: {available_keys}"
+        )
 
     return {
         "raw_text": raw_text,
@@ -161,12 +174,24 @@ def node_analyzer(state: AgentState) -> AgentState:
     输出 intent_type (query_knowledge/save_note)、category (Spanish/Tech/Humanities) 和对应的 domain
     """
     print("🧠 [Analysis] Intent & Domain Detection")
+    # 定义 text 变量 (从 state 中提取)
+    text = state.get("raw_text", "")
+    if not text:
+        text = state.get("user_input", "") # 双重保险
 
     result = researcher.analyze_intent(state["raw_text"])
 
     # 兼容处理：确保字段存在
     intent = result.get("intent", "save_note")
     # 如果 analyze_intent 返回的是 "save_note" 或 "query_knowledge"，需要做一下映射
+    # 逻辑：如果输入很长（超过150字符），且不包含问号，
+    # 哪怕 LLM 觉得是 Query，大概率也是用户粘贴的笔记，强制转为 Save。
+    is_long_text = len(text) > 150
+    has_question_mark = "?" in text or "？" in text
+    
+    if intent == "query_knowledge" and is_long_text and not has_question_mark:
+        print(f"⚠️ [Override] Input is long ({len(text)} chars) & no question mark. Forcing intent to 'save_note'.")
+        intent = "save_note"
     if "query" in intent:
         routing = "query"
     else:

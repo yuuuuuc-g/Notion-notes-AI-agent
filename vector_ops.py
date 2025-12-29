@@ -2,14 +2,14 @@ import os
 import chromadb
 from chromadb.utils import embedding_functions
 from dotenv import load_dotenv
-from typing import Optional, Dict, Any 
+from typing import Optional, Dict, Any
 
 load_dotenv()
 
-# --- 配置 ---
-# all-MiniLM-L6-v2 限制约 256-384 Tokens (建议控制在 500 中文字符以内)
+# --- 配置 Embedding ---
 EMBEDDING_FUNC = embedding_functions.SentenceTransformerEmbeddingFunction(
-    model_name="all-MiniLM-L6-v2"
+    model_name="BAAI/bge-m3", 
+    device="cpu"   # "mps", "cuda" 或 "cpu"
 )
 
 client = chromadb.PersistentClient(path="./chroma_db")
@@ -71,9 +71,9 @@ def add_memory(
     # 策略：
     # 1. 标题最重要，重复两遍以增加权重
     # 2. 摘要次重要
-    # 3. 正文截取前 400 字符（MiniLM 只有 256 token 窗口，塞多了会被截断）
     summary_text = final_metadata.get("summary", "")
-    dense_content = final_content[:400].replace("\n", " ")
+    # 新代码: BGE-M3 很能吃，可以放宽到 4000 字符甚至更多
+    dense_content = final_content[:3000].replace("\n", " ")
     
     embedding_text = (
         f"Title: {final_title}\n"
